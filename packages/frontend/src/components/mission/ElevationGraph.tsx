@@ -2,6 +2,11 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMissionStore } from "@/store/missionStore";
 import type { SelectionMode } from "@/store/missionStore";
+import { usePreferencesStore } from "@/store/preferencesStore";
+import { useSimulationStore } from "@/store/simulationStore";
+import { useMissionStats } from "@/lib/useMissionStats";
+import { formatDuration } from "@/lib/missionStats";
+import { formatDistance } from "@/lib/units";
 
 const GRAPH_HEIGHT = 100;
 const PAD_TOP = 14;
@@ -21,6 +26,10 @@ export function ElevationGraph() {
   const selectedIndices = useMissionStore((s) => s.selectedWaypointIndices);
   const updateWaypoint = useMissionStore((s) => s.updateWaypoint);
   const selectWaypoint = useMissionStore((s) => s.selectWaypoint);
+  const unitSystem = usePreferencesStore((s) => s.preferences.unitSystem);
+  const stats = useMissionStats();
+  const simActive = useSimulationStore((s) => s.active);
+  const simTimeS = useSimulationStore((s) => s.timeS);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -238,6 +247,15 @@ export function ElevationGraph() {
           <ChevronRight className="h-3 w-3" />
         )}
         Elevation chart
+        {waypoints.length >= 2 && (
+          <span className="ml-auto normal-case tracking-normal font-normal text-zinc-500 tabular-nums">
+            {formatDistance(stats.totalDistanceM, unitSystem)} ·{" "}
+            {formatDuration(stats.estimatedFlightTimeS)}
+            {stats.photoCount > 0 && ` · ${stats.photoCount} photos`}
+            {stats.batteriesNeeded > 1 &&
+              ` · ${stats.batteriesNeeded} batteries`}
+          </span>
+        )}
       </button>
 
       {/* Collapsible body */}
@@ -398,6 +416,49 @@ export function ElevationGraph() {
                 </g>
               );
             })}
+            {/* Flight preview position */}
+            {simActive &&
+              waypoints.length >= 2 &&
+              (() => {
+                // Position along the chart: waypoint position + leg progress
+                let pos = 0;
+                while (
+                  pos < waypoints.length - 1 &&
+                  stats.arrivalS[pos + 1] <= simTimeS
+                ) {
+                  pos++;
+                }
+                const seg = stats.segments[pos];
+                const frac =
+                  seg && seg.timeS > 0 && simTimeS > seg.startS
+                    ? Math.min(1, (simTimeS - seg.startS) / seg.timeS)
+                    : 0;
+                const x = toX(pos + frac);
+                const xEnd = toX(Math.min(pos + 1, waypoints.length - 1));
+                return (
+                  <g pointerEvents="none">
+                    {seg && (
+                      <line
+                        x1={toX(pos)}
+                        x2={xEnd}
+                        y1={GRAPH_HEIGHT - 2}
+                        y2={GRAPH_HEIGHT - 2}
+                        stroke="#34d399"
+                        strokeWidth={3}
+                        opacity={0.8}
+                      />
+                    )}
+                    <line
+                      x1={x}
+                      x2={x}
+                      y1={0}
+                      y2={GRAPH_HEIGHT}
+                      stroke="#34d399"
+                      strokeWidth={1.5}
+                    />
+                  </g>
+                );
+              })()}
           </svg>
         </div>
       )}

@@ -32,6 +32,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       localStorage.removeItem("droneroute_email");
       localStorage.removeItem("droneroute_is_admin");
       useMissionStore.getState().clearMission();
+      useMissionStore.getState().clearHistory();
       window.location.reload();
       throw new Error(err.error || "Your account has been suspended");
     }

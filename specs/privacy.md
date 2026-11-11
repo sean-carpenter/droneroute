@@ -21,6 +21,7 @@ Understand what DroneRoute stores about you and where it lives.
 - Passwords are stored only as bcrypt hashes, never in plain text.
 - The app uses no analytics or tracking. Map tiles and location search go to
   Mapbox, and airspace lookups go to national providers, only as needed to draw
-  the map and zones.
+  the map and zones. The optional wind advisory sends a position rounded to
+  about 1 km to Open-Meteo, and only while it is switched on.
 - Shared mission links are viewable by anyone who has the link and show the
   owner's email — only share with people you trust.

@@ -116,6 +116,8 @@ jobs:
         run: npm run build -w packages/shared
       - name: Test backend
         run: npm test -w packages/backend
+      - name: Test frontend
+        run: npm test -w packages/frontend
 
   docker:
     name: Docker build

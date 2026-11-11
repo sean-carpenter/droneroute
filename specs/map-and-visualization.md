@@ -15,6 +15,8 @@ An interactive map where you plan flights and see everything at a glance.
 - Use the floating toolbar to switch between waypoint mode, POI mode, and template tools.
 - View an elevation graph below the waypoint list that shows altitude changes across the flight.
 - See live previews when configuring templates before placing them.
+- **Preview the flight**: the Preview button animates the drone along the route with its heading and camera view, at 1× to 30× speed. A panel shows elapsed and remaining time, distance left, altitude, gimbal pitch, photos taken and the next action; you can pause or scrub to any moment. The elevation chart highlights the current leg.
+- **Wind advisory**: the Wind button shows current wind speed, direction and gusts for the mission area at roughly the flight altitude, with a caution above 8 m/s and a do-not-fly warning at the aircraft's 12 m/s limit. It is advisory only and never changes the mission.
 
 ## 3D mode
 
@@ -49,6 +51,7 @@ The map is the central workspace. Everything you do — placing waypoints, POIs,
 - The map opens centered on Barcelona by default. Self-hosted instances can change the starting location by setting `DEFAULT_MAP_VIEW` in their environment (or `docker-compose.yml`), formatted as `lat,lng` or `lat,lng,zoom`, so the map opens on their local area. Invalid or out-of-range values fall back to the built-in default.
 - You can click waypoints and POIs directly on the map to select and edit them.
 - The geocoding search box collapses to an icon when not in use to save space.
+- The wind advisory is off until you turn it on. It uses Open-Meteo forecast-model data, refreshed when the mission area changes or on request, and cached for 15 minutes.
 - A Mapbox access token is required. Self-hosted instances must set `MAPBOX_TOKEN` in their `.env` file.
 
 ## Airspace restriction zones

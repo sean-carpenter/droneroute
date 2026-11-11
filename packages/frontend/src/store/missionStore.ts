@@ -12,6 +12,21 @@ import type { TemplateType } from "@/lib/templates";
 
 export type SelectionMode = "replace" | "toggle" | "range";
 
+/** The undoable part of the store: the mission document itself. */
+export interface MissionSnapshot {
+  missionId: string | null;
+  missionName: string;
+  config: MissionConfig;
+  waypoints: Waypoint[];
+  pois: PointOfInterest[];
+  obstacles: Obstacle[];
+}
+
+/** Maximum number of undo steps kept. */
+export const HISTORY_LIMIT = 50;
+/** Edits closer together than this collapse into one undo step (drags, typing). */
+export const HISTORY_COALESCE_MS = 400;
+
 interface MissionState {
   // Mission metadata
   missionId: string | null;
@@ -36,6 +51,13 @@ interface MissionState {
   isDrawingObstacle: boolean;
   drawingVertices: [number, number][];
 
+  // History
+  past: MissionSnapshot[];
+  future: MissionSnapshot[];
+  undo: () => void;
+  redo: () => void;
+  clearHistory: () => void;
+
   // UI state
   isAddingWaypoint: boolean;
   isAddingPoi: boolean;
@@ -56,8 +78,12 @@ interface MissionState {
   selectWaypoint: (index: number | null, mode?: SelectionMode) => void;
   selectAllWaypoints: () => void;
   clearWaypointSelection: () => void;
+  /** Select exactly these waypoints, or add them to the current selection. */
+  setWaypointSelection: (indices: number[], additive?: boolean) => void;
   removeSelectedWaypoints: () => void;
   updateSelectedWaypoints: (updates: Partial<Waypoint>) => void;
+  /** Apply a per-waypoint change to every selected waypoint. */
+  mapSelectedWaypoints: (fn: (wp: Waypoint) => Waypoint) => void;
   reorderWaypoints: (fromIndex: number, toIndex: number) => void;
   setIsAddingWaypoint: (adding: boolean) => void;
   addAction: (waypointIndex: number, action: WaypointAction) => void;
@@ -103,6 +129,8 @@ interface MissionState {
   setDrawingVertices: (vertices: [number, number][]) => void;
 
   // Mission actions
+  /** Add imported waypoints/POIs to the end of the current mission. */
+  appendImported: (waypoints: Waypoint[], pois?: PointOfInterest[]) => void;
   loadMission: (data: {
     id?: string;
     name: string;
@@ -114,6 +142,39 @@ interface MissionState {
   clearMission: () => void;
   setDirty: (dirty: boolean) => void;
 }
+
+const CLEARED_SELECTION = {
+  selectedWaypointIndices: new Set<number>(),
+  lastSelectedWaypointIndex: null,
+  selectedPoiId: null,
+  selectedObstacleId: null,
+};
+
+function snapshotOf(state: MissionSnapshot): MissionSnapshot {
+  return {
+    missionId: state.missionId,
+    missionName: state.missionName,
+    config: state.config,
+    waypoints: state.waypoints,
+    pois: state.pois,
+    obstacles: state.obstacles,
+  };
+}
+
+/** True when two states hold different mission documents. */
+function documentChanged(a: MissionSnapshot, b: MissionSnapshot): boolean {
+  return (
+    a.waypoints !== b.waypoints ||
+    a.pois !== b.pois ||
+    a.obstacles !== b.obstacles ||
+    a.config !== b.config ||
+    a.missionName !== b.missionName
+  );
+}
+
+// History bookkeeping lives outside the store so it never triggers renders.
+let restoringHistory = false;
+let lastHistoryPushAt = 0;
 
 export const useMissionStore = create<MissionState>((set, get) => ({
   missionId: null,
@@ -132,6 +193,46 @@ export const useMissionStore = create<MissionState>((set, get) => ({
   isAddingWaypoint: true,
   isAddingPoi: false,
   templateMode: null,
+  past: [],
+  future: [],
+
+  undo: () => {
+    const { past, future } = get();
+    if (past.length === 0) return;
+    const previous = past[past.length - 1];
+    restoringHistory = true;
+    lastHistoryPushAt = 0;
+    set({
+      ...previous,
+      past: past.slice(0, -1),
+      future: [...future, snapshotOf(get())],
+      ...CLEARED_SELECTION,
+      dirty: true,
+    });
+    restoringHistory = false;
+  },
+
+  redo: () => {
+    const { past, future } = get();
+    if (future.length === 0) return;
+    const next = future[future.length - 1];
+    restoringHistory = true;
+    lastHistoryPushAt = 0;
+    set({
+      ...next,
+      past: [...past, snapshotOf(get())],
+      future: future.slice(0, -1),
+      ...CLEARED_SELECTION,
+      dirty: true,
+    });
+    restoringHistory = false;
+  },
+
+  clearHistory: () => {
+    lastHistoryPushAt = 0;
+    set({ past: [], future: [] });
+  },
+
   currentPage: "editor",
   shareToken: null,
   setCurrentPage: (page) => set({ currentPage: page }),
@@ -271,6 +372,33 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       selectedWaypointIndices: new Set<number>(),
       lastSelectedWaypointIndex: null,
     }),
+
+  setWaypointSelection: (indices, additive = false) =>
+    set((state) => {
+      const next = additive
+        ? new Set(state.selectedWaypointIndices)
+        : new Set<number>();
+      for (const i of indices) next.add(i);
+      return {
+        selectedWaypointIndices: next,
+        lastSelectedWaypointIndex:
+          indices.length > 0
+            ? indices[indices.length - 1]
+            : additive
+              ? state.lastSelectedWaypointIndex
+              : null,
+      };
+    }),
+
+  mapSelectedWaypoints: (fn) =>
+    set((state) => ({
+      waypoints: state.waypoints.map((wp) =>
+        state.selectedWaypointIndices.has(wp.index)
+          ? { ...fn(wp), index: wp.index }
+          : wp,
+      ),
+      dirty: true,
+    })),
 
   removeSelectedWaypoints: () =>
     set((state) => {
@@ -543,8 +671,32 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       };
     }),
 
-  loadMission: (data) =>
+  appendImported: (newWps, newPois = []) =>
+    set((state) => {
+      const startIndex = state.waypoints.length;
+      const appended = newWps.map((wp, i) => ({
+        ...wp,
+        index: startIndex + i,
+        name: `Waypoint ${startIndex + i + 1}`,
+      }));
+      return {
+        waypoints: [...state.waypoints, ...appended],
+        pois: [...state.pois, ...newPois],
+        selectedWaypointIndices: new Set(appended.map((wp) => wp.index)),
+        lastSelectedWaypointIndex: appended.length
+          ? appended[appended.length - 1].index
+          : state.lastSelectedWaypointIndex,
+        dirty: true,
+      };
+    }),
+
+  loadMission: (data) => {
+    // A freshly loaded mission is a new document: its history starts empty.
+    restoringHistory = true;
+    lastHistoryPushAt = 0;
     set({
+      past: [],
+      future: [],
       missionId: data.id || null,
       missionName: data.name,
       config: data.config,
@@ -556,7 +708,9 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       selectedPoiId: null,
       selectedObstacleId: null,
       dirty: false,
-    }),
+    });
+    restoringHistory = false;
+  },
 
   clearMission: () => {
     const prefs = usePreferencesStore.getState().preferences;
@@ -579,3 +733,25 @@ export const useMissionStore = create<MissionState>((set, get) => ({
 
   setDirty: (dirty) => set({ dirty }),
 }));
+
+// Record an undo step whenever the mission document changes. Store updates
+// are immutable, so comparing references is enough to detect an edit, and
+// every mutating action is covered without each one having to opt in.
+useMissionStore.subscribe((state, prev) => {
+  if (restoringHistory || !documentChanged(state, prev)) return;
+
+  const now = Date.now();
+  const coalesce =
+    state.past.length > 0 && now - lastHistoryPushAt < HISTORY_COALESCE_MS;
+  lastHistoryPushAt = now;
+
+  if (coalesce) {
+    if (state.future.length > 0) useMissionStore.setState({ future: [] });
+    return;
+  }
+
+  useMissionStore.setState({
+    past: [...state.past, snapshotOf(prev)].slice(-HISTORY_LIMIT),
+    future: [],
+  });
+});

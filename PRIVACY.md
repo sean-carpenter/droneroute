@@ -62,6 +62,10 @@ analytics, advertising, or behavioural tracking.
 - **Airspace providers** — when you enable airspace restrictions, the bounding
   box of your current map view is sent to the relevant national provider
   (e.g. ENAIRE in Spain, DGAC in France, NATS in the UK) to fetch the zones.
+- **Open-Meteo** — only when you switch on the wind advisory. Your browser
+  sends the mission area's position (or the map center), rounded to about
+  1 km, to Open-Meteo to fetch current wind. Nothing is sent while the
+  advisory is off, which is the default.
 - **Google** — only in cloud mode, and only if you choose Google sign-in. Your
   Google credential is verified server-side; we store your email and a Google
   account identifier.

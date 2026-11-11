@@ -13,14 +13,56 @@ import { v4 as uuidv4 } from "uuid";
 const parser = new XMLParser({
   ignoreAttributes: false,
   removeNSPrefix: false,
+  // Uploaded files are untrusted: never expand DTD entities.
+  processEntities: false,
   isArray: (name) => {
     return (
       name === "Placemark" ||
+      name === "Folder" ||
       name === "wpml:actionGroup" ||
       name === "wpml:action"
     );
   },
 });
+
+/** Action types DroneRoute can edit and export. Others are dropped on import. */
+const SUPPORTED_ACTIONS = new Set<string>([
+  "takePhoto",
+  "startRecord",
+  "stopRecord",
+  "gimbalRotate",
+  "gimbalEvenlyRotate",
+  "rotateYaw",
+  "hover",
+  "zoom",
+  "focus",
+]);
+
+const BOOLEAN_PARAMS = new Set(["isPointFocus", "isInfiniteFocus"]);
+
+/**
+ * WPML action params arrive as `{ "wpml:hoverTime": 5 }`. The rest of the app
+ * (and the exporter) uses the bare names, so strip the namespace prefix.
+ */
+function normalizeActionParams(raw: unknown): Record<string, unknown> {
+  if (typeof raw !== "object" || raw === null) return {};
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const name = key.replace(/^wpml:/, "");
+    out[name] = BOOLEAN_PARAMS.has(name)
+      ? value === 1 || value === "1" || value === true
+      : value;
+  }
+  return out;
+}
+
+export interface ParsedMission {
+  config: MissionConfig;
+  waypoints: Waypoint[];
+  pois: PointOfInterest[];
+  /** Things the user should know were changed or dropped during import. */
+  warnings: string[];
+}
 
 function extractCoords(coordStr: string): {
   longitude: number;
@@ -30,41 +72,117 @@ function extractCoords(coordStr: string): {
   return { longitude: parts[0], latitude: parts[1] };
 }
 
-function parseActions(placemark: any): WaypointAction[] {
-  const groups = placemark["wpml:actionGroup"];
-  if (!groups) return [];
+interface ParsedActions {
+  /** Actions executed on arrival at the waypoint. */
+  actions: WaypointAction[];
+  /** Capture triggers that span a range of waypoints. */
+  intervals: {
+    startIndex: number;
+    endIndex: number;
+    type: "multipleDistance" | "multipleTiming";
+    param: number;
+  }[];
+  dropped: string[];
+}
 
-  const actions: WaypointAction[] = [];
+function parseActions(placemark: any, fallbackIndex: number): ParsedActions {
+  const result: ParsedActions = { actions: [], intervals: [], dropped: [] };
+  const groups = placemark["wpml:actionGroup"];
+  if (!groups) return result;
+
   for (const group of groups) {
+    const triggerType =
+      group["wpml:actionTrigger"]?.["wpml:actionTriggerType"] ?? "reachPoint";
     const groupActions = group["wpml:action"] || [];
+
+    if (
+      triggerType === "multipleDistance" ||
+      triggerType === "multipleTiming"
+    ) {
+      const param = parseFloat(
+        group["wpml:actionTrigger"]?.["wpml:actionTriggerParam"],
+      );
+      const takesPhotos = groupActions.some(
+        (a: any) => a["wpml:actionActuatorFunc"] === "takePhoto",
+      );
+      if (takesPhotos && Number.isFinite(param) && param > 0) {
+        const start = parseInt(group["wpml:actionGroupStartIndex"]);
+        const end = parseInt(group["wpml:actionGroupEndIndex"]);
+        result.intervals.push({
+          startIndex: Number.isFinite(start) ? start : fallbackIndex,
+          endIndex: Number.isFinite(end) ? end : fallbackIndex + 1,
+          type: triggerType,
+          param,
+        });
+      }
+      continue;
+    }
+
     for (const action of groupActions) {
-      actions.push({
-        actionId: parseInt(action["wpml:actionId"] || "0"),
-        actionType: action["wpml:actionActuatorFunc"],
-        params: action["wpml:actionActuatorFuncParam"] || {},
+      const actionType = action["wpml:actionActuatorFunc"];
+      if (!SUPPORTED_ACTIONS.has(actionType)) {
+        if (actionType) result.dropped.push(String(actionType));
+        continue;
+      }
+      result.actions.push({
+        // Ids only need to be unique within one waypoint's action list
+        actionId: result.actions.length,
+        actionType,
+        params: normalizeActionParams(
+          action["wpml:actionActuatorFuncParam"],
+        ) as any,
       });
     }
   }
-  return actions;
+  return result;
 }
 
-export async function parseKmz(buffer: Buffer): Promise<{
-  config: MissionConfig;
-  waypoints: Waypoint[];
-  pois: PointOfInterest[];
-}> {
-  const zip = await JSZip.loadAsync(buffer);
+/** Placemarks of the first folder that actually contains waypoint points. */
+function waypointFolder(doc: any): any | undefined {
+  const folders: any[] = doc?.Folder ?? [];
+  return (
+    folders.find((f) => (f.Placemark ?? []).some((pm: any) => pm?.Point)) ??
+    undefined
+  );
+}
 
-  // Try template.kml at root or inside wpmz/ directory (DJI convention)
+/** True when the archive looks like a DJI WPML mission. */
+export function isWpmlArchive(zip: JSZip): boolean {
+  return [
+    "template.kml",
+    "wpmz/template.kml",
+    "waylines.wpml",
+    "wpmz/waylines.wpml",
+  ].some((name) => zip.file(name));
+}
+
+export async function parseKmz(buffer: Buffer): Promise<ParsedMission> {
+  return parseWpmlArchive(await JSZip.loadAsync(buffer));
+}
+
+export async function parseWpmlArchive(zip: JSZip): Promise<ParsedMission> {
+  const warnings: string[] = [];
+
+  // template.kml sits at the root or inside wpmz/ (DJI convention). Some
+  // exports only carry waylines.wpml, which has the same mission config.
   const templateFile =
     zip.file("template.kml") || zip.file("wpmz/template.kml");
-  if (!templateFile) {
+  const waylinesFile =
+    zip.file("waylines.wpml") || zip.file("wpmz/waylines.wpml");
+  if (!templateFile && !waylinesFile) {
     throw new Error("Invalid KMZ: missing template.kml");
   }
 
-  const templateXml = await templateFile.async("string");
-  const parsed = parser.parse(templateXml);
-  const doc = parsed.kml.Document;
+  const waylinesDoc = waylinesFile
+    ? parser.parse(await waylinesFile.async("string"))?.kml?.Document
+    : undefined;
+  const doc =
+    (templateFile
+      ? parser.parse(await templateFile.async("string"))?.kml?.Document
+      : undefined) ?? waylinesDoc;
+  if (!doc) {
+    throw new Error("Invalid KMZ: no mission document");
+  }
 
   // Parse mission config
   const mc = doc["wpml:missionConfig"] || {};
@@ -87,18 +205,21 @@ export async function parseKmz(buffer: Buffer): Promise<{
   };
 
   // Determine which document contains the Folder with waypoints.
-  // template.kml may have it, or it may only be in waylines.wpml.
-  let folder = doc.Folder;
-
-  if (!folder) {
-    // Try waylines.wpml for the actual waypoint data
-    const waylinesFile =
-      zip.file("waylines.wpml") || zip.file("wpmz/waylines.wpml");
-    if (waylinesFile) {
-      const waylinesXml = await waylinesFile.async("string");
-      const waylinesParsed = parser.parse(waylinesXml);
-      folder = waylinesParsed.kml?.Document?.Folder;
+  // template.kml may have it, or — for mapping/area templates, whose
+  // template only stores a polygon — it may only be in waylines.wpml.
+  let folder = waypointFolder(doc);
+  if (!folder && waylinesDoc) {
+    folder = waypointFolder(waylinesDoc);
+    if (folder && (doc.Folder ?? []).length > 0) {
+      warnings.push(
+        "This file is not a plain waypoint route; the flight lines DJI generated for it were imported as waypoints.",
+      );
     }
+  }
+  if (waylinesDoc && (waylinesDoc.Folder ?? []).length > 1) {
+    warnings.push(
+      "The file contains several waylines; only the first one was imported.",
+    );
   }
 
   if (folder) {
@@ -125,12 +246,20 @@ export async function parseKmz(buffer: Buffer): Promise<{
   }
 
   // Parse waypoints and collect POIs from waypointPoiPoint references
-  const placemarks = folder?.Placemark || [];
+  const placemarks: any[] = (folder?.Placemark || []).filter(
+    (pm: any) => pm?.Point?.coordinates != null,
+  );
   const poiMap = new Map<string, PointOfInterest>(); // key: "lon,lat,height" -> POI
+  const intervals: ParsedActions["intervals"] = [];
+  const dropped = new Set<string>();
 
-  const waypoints: Waypoint[] = placemarks.map((pm: any, i: number) => {
-    const coords = extractCoords(pm.Point.coordinates);
-    const actions = parseActions(pm);
+  const parsedWaypoints: Waypoint[] = placemarks.map((pm: any, i: number) => {
+    const coords = extractCoords(String(pm.Point.coordinates));
+    const wpIndex = pm["wpml:index"] != null ? parseInt(pm["wpml:index"]) : i;
+    const parsedActions = parseActions(pm, wpIndex);
+    const actions = parsedActions.actions;
+    intervals.push(...parsedActions.intervals);
+    for (const name of parsedActions.dropped) dropped.add(name);
 
     // Check for per-waypoint heading params with POI
     const headingParam = pm["wpml:waypointHeadingParam"];
@@ -189,14 +318,10 @@ export async function parseKmz(buffer: Buffer): Promise<{
       // Look for a gimbalRotate action with pitch angle
       const gimbalAction = actions.find((a) => a.actionType === "gimbalRotate");
       const gimbalParams = gimbalAction?.params as any;
-      if (gimbalParams?.["wpml:gimbalPitchRotateAngle"] != null) {
-        gimbalPitchAngle = parseFloat(
-          gimbalParams["wpml:gimbalPitchRotateAngle"],
-        );
+      if (gimbalParams?.gimbalPitchRotateAngle != null) {
+        gimbalPitchAngle = parseFloat(gimbalParams.gimbalPitchRotateAngle);
       }
     }
-
-    const wpIndex = pm["wpml:index"] != null ? parseInt(pm["wpml:index"]) : i;
 
     return {
       ...DEFAULT_WAYPOINT,
@@ -228,7 +353,50 @@ export async function parseKmz(buffer: Buffer): Promise<{
     };
   });
 
+  // The editor addresses waypoints by array position, so order them by
+  // their file index and renumber from zero.
+  const fileIndexToPos = new Map<number, number>();
+  const waypoints = [...parsedWaypoints]
+    .sort((a, b) => a.index - b.index)
+    .map((wp, pos) => {
+      fileIndexToPos.set(wp.index, pos);
+      return { ...wp, index: pos, name: `Waypoint ${pos + 1}` };
+    });
+
+  // Interval capture groups cover a range of waypoints: mark every leg in it.
+  let convertedTiming = false;
+  for (const interval of intervals) {
+    const start = fileIndexToPos.get(interval.startIndex);
+    if (start === undefined) continue;
+    const end = fileIndexToPos.get(interval.endIndex) ?? start + 1;
+    for (let pos = start; pos < Math.max(end, start + 1); pos++) {
+      const wp = waypoints[pos];
+      if (!wp || pos >= waypoints.length - 1) continue;
+      if (interval.type === "multipleDistance") {
+        wp.photoIntervalM = interval.param;
+      } else {
+        // Time trigger: express it as the distance flown in that time
+        const speed = wp.useGlobalSpeed ? config.autoFlightSpeed : wp.speed;
+        wp.photoIntervalM = Math.round(interval.param * speed * 10) / 10;
+        convertedTiming = true;
+      }
+    }
+  }
+  if (convertedTiming) {
+    warnings.push(
+      "Timed interval shooting was converted to distance intervals using each leg's speed.",
+    );
+  }
+  if (dropped.size > 0) {
+    warnings.push(
+      `Unsupported actions were skipped: ${[...dropped].join(", ")}.`,
+    );
+  }
+  if (waypoints.length === 0) {
+    warnings.push("No waypoints were found in the file.");
+  }
+
   const pois = Array.from(poiMap.values());
 
-  return { config, waypoints, pois };
+  return { config, waypoints, pois, warnings };
 }

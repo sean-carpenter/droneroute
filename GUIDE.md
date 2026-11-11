@@ -43,6 +43,10 @@ That's it. The rest of this guide covers every feature in detail.
 | `G`                    | Start grid survey template — click and drag to define the survey area      |
 | `F`                    | Start facade scan template — click and drag to define the wall line        |
 | `Z`                    | Start pencil path template — click and draw freehand on the map            |
+| `C`                    | Start corridor survey template — draw the centerline on the map            |
+| `T`                    | Start tower inspection template — click and drag center + standoff radius  |
+| `Ctrl+Z` / `Cmd+Z`     | Undo the last change                                                       |
+| `Ctrl+Shift+Z`         | Redo                                                                       |
 | `Esc`                  | Cancel current mode / deselect all                                         |
 | `Delete` / `Backspace` | Remove selected waypoint(s)                                                |
 | `Ctrl+A` / `Cmd+A`     | Select all waypoints                                                       |
@@ -52,6 +56,7 @@ That's it. The rest of this guide covers every feature in detail.
 - **Click** — select a single waypoint
 - **Ctrl/Cmd + Click** — toggle selection (add/remove)
 - **Shift + Click** — range select (from last selected to clicked)
+- **Shift + Drag on the map** — box-select every waypoint inside the rectangle (add Ctrl/Cmd to extend the current selection)
 
 ---
 
@@ -94,6 +99,8 @@ Select multiple waypoints (Ctrl/Cmd+Click or Shift+Click), then use the bulk act
 
 - Delete all selected waypoints
 - Apply the same altitude, speed, or other settings to multiple waypoints at once
+- Raise or lower all of them by the same amount
+- Set a photo interval, or add and remove photo actions
 
 ![Multiple waypoints selected in the sidebar with bulk action toolbar](docs/screenshots/multiselect.jpg)
 
@@ -202,16 +209,35 @@ Creates a lawn-mower (zigzag) pattern for systematic area coverage. Click and dr
 
 **Configuration:**
 
-- **Altitude** — flight height (default 80m)
-- **Line spacing** — distance between parallel passes in meters (default 30m)
+- **Mode** — _Photogrammetry_ (default) derives spacing from overlap; _Fixed spacing_ uses a line spacing you type
+- **Altitude** / **GSD** — flight height (default 80m) and the ground sample distance it gives; change either one and the other follows
+- **Side overlap** / **Forward overlap** — default 75% / 75%, with presets for quick, standard and high-detail surveys
+- **Photo capture** — _Distance interval_ (photos every few meters without stopping), _Waypoint per photo_, _Line ends only_, or no photos
 - **Rotation** — rotate the grid pattern (-180 to 180 degrees)
-- **Add photos** — automatically add a "Take Photo" action at each waypoint
+
+The panel shows the image footprint, line spacing, photo interval, photo count, distance, flight time and batteries as you adjust. Camera values are for the Mavic 3E wide camera.
 
 **Use cases:** Mapping, photogrammetry, agricultural surveys, search and rescue.
 
 The gimbal is set to -90 degrees (straight down) and heading follows the flight direction. The pattern automatically determines the most efficient orientation based on the shape of your survey area.
 
 ![Grid survey template with zigzag pattern covering a rectangular area](docs/screenshots/template-grid.jpg)
+
+### Corridor Survey
+
+**Shortcut: C**
+
+Draw a path along a road, river, pipeline or power line. DroneRoute straightens small wobbles and flies parallel survey lines along it — as many as needed to cover the **corridor width** at the chosen altitude and side overlap. Overlap, GSD and photo capture work as in the grid survey.
+
+### Tower Inspection
+
+**Shortcut: T**
+
+Click the structure's center and drag out the standoff radius. Choose **Helix** (one continuous climbing spiral) or **Stacked orbits** (level rings), the altitude range, the number of turns and points per turn.
+
+### Camera Aim
+
+Orbit, facade, tower, pencil and corridor templates have a **Camera aim** section: _Fixed pitch_, _Toward POI_, _Height on structure_ (aim at the wall, orbit center or tower axis at a chosen height — 0 is the base) or _Relative to surface_. The pitch is computed for each waypoint from its position and altitude, and the panel shows the resulting pitch range.
 
 ### Facade Scan
 
@@ -362,7 +388,9 @@ The tool automatically detects connected DJI RC controllers (via USB or mounted 
 
 ### Importing
 
-Click the **Import** button and select a `.kmz` file. DroneRoute will parse the DJI WPML data and reconstruct the mission, including:
+Click the **Import** button (or drop a file on the page) and select a DJI `.kmz`, a `.kml` or Google Earth `.kmz`, a `.gpx`, or a Litchi `.csv`. A preview shows what was found and any warnings before you replace or add to the current mission.
+
+For DJI KMZ files, DroneRoute parses the WPML data and reconstructs the mission, including:
 
 - All waypoints with positions, altitudes, speeds, heading, and gimbal settings
 - Waypoint actions (photos, video, gimbal rotations, etc.)

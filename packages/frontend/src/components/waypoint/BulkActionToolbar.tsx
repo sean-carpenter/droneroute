@@ -5,6 +5,7 @@ import {
   ArrowUp,
   Gauge,
   SlidersHorizontal,
+  Camera,
 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,9 @@ import {
   toDisplaySpeed,
   fromDisplaySpeed,
   speedRange,
+  distanceLabel,
+  toDisplayDistance,
+  fromDisplayDistance,
 } from "@/lib/units";
 import type { HeadingMode, TurnMode, Waypoint } from "@droneroute/shared";
 
@@ -55,6 +59,7 @@ export function BulkActionToolbar() {
     clearWaypointSelection,
     removeSelectedWaypoints,
     updateSelectedWaypoints,
+    mapSelectedWaypoints,
   } = useMissionStore();
   const unitSystem = usePreferencesStore((s) => s.preferences.unitSystem);
 
@@ -68,6 +73,48 @@ export function BulkActionToolbar() {
       removeSelectedWaypoints();
     }
   };
+
+  /** Raise or lower every selected waypoint by the same amount. */
+  const offsetAltitude = (displayDelta: number) => {
+    const delta = fromDisplayHeight(displayDelta, unitSystem);
+    mapSelectedWaypoints((wp) => ({
+      ...wp,
+      height: Math.min(
+        500,
+        Math.max(1, Math.round((wp.height + delta) * 10) / 10),
+      ),
+    }));
+  };
+
+  const addPhotoAction = () =>
+    mapSelectedWaypoints((wp) =>
+      wp.actions.some((a) => a.actionType === "takePhoto")
+        ? wp
+        : {
+            ...wp,
+            actions: [
+              ...wp.actions,
+              {
+                actionId:
+                  Math.max(-1, ...wp.actions.map((a) => a.actionId)) + 1,
+                actionType: "takePhoto" as const,
+                params: { payloadPositionIndex: 0 },
+              },
+            ],
+          },
+    );
+
+  const removePhotoActions = () =>
+    mapSelectedWaypoints((wp) => ({
+      ...wp,
+      actions: wp.actions.filter((a) => a.actionType !== "takePhoto"),
+    }));
+
+  const commonPhotoInterval = getCommonValue(
+    waypoints,
+    selectedWaypointIndices,
+    "photoIntervalM",
+  );
 
   const handleAssignPoi = (poiId: string) => {
     updateSelectedWaypoints({
@@ -445,6 +492,92 @@ export function BulkActionToolbar() {
                   </Select>
                 </div>
               )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* Relative altitude */}
+              <div>
+                <Label className="text-[10px] text-muted-foreground">
+                  Raise / lower by ({heightLabel(unitSystem)})
+                </Label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 10 or -5"
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    const v = parseFloat(e.currentTarget.value);
+                    if (!isNaN(v) && v !== 0) {
+                      offsetAltitude(v);
+                      e.currentTarget.value = "";
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const v = parseFloat(e.target.value);
+                    if (!isNaN(v) && v !== 0) {
+                      offsetAltitude(v);
+                      e.target.value = "";
+                    }
+                  }}
+                  step={5}
+                  className="h-7 text-xs mt-0.5"
+                  title="Adds this amount to each selected waypoint's altitude"
+                />
+              </div>
+
+              {/* Interval capture */}
+              <div>
+                <Label className="text-[10px] text-muted-foreground">
+                  Photo interval ({distanceLabel(unitSystem)})
+                </Label>
+                <Input
+                  type="number"
+                  placeholder={
+                    commonPhotoInterval !== undefined ? "Off" : "Mixed / off"
+                  }
+                  defaultValue={
+                    commonPhotoInterval !== undefined
+                      ? toDisplayDistance(commonPhotoInterval, unitSystem)
+                      : ""
+                  }
+                  key={`pi-${commonPhotoInterval}`}
+                  onBlur={(e) => {
+                    const v = parseFloat(e.target.value);
+                    updateSelectedWaypoints({
+                      photoIntervalM:
+                        !isNaN(v) && v > 0
+                          ? fromDisplayDistance(v, unitSystem)
+                          : undefined,
+                    });
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                  }}
+                  min={1}
+                  step={1}
+                  className="h-7 text-xs mt-0.5"
+                  title="Take a photo every N while flying from each selected waypoint to the next. Clear to turn off."
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={addPhotoAction}
+                className="h-7 text-xs gap-1.5 flex-1"
+              >
+                <Camera className="h-3 w-3" />
+                Add photo action
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={removePhotoActions}
+                className="h-7 text-xs gap-1.5 flex-1"
+              >
+                Remove photo actions
+              </Button>
             </div>
           </div>
         )}

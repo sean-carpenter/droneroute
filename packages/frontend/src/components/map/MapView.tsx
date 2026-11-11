@@ -24,6 +24,11 @@ import { ObstacleDrawHandler } from "./ObstacleDrawHandler";
 import { ObstaclePolygon } from "./ObstaclePolygon";
 import { AirspaceOverlay } from "./AirspaceOverlay";
 import { CameraFrustum } from "./CameraFrustum";
+import { BoxSelectHandler } from "./BoxSelectHandler";
+import { WindPanel } from "./WindPanel";
+import { SimulationLayer } from "./SimulationLayer";
+import { SimulationPlayer } from "@/components/mission/SimulationPlayer";
+import { useSimulationStore } from "@/store/simulationStore";
 import { Triangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -475,6 +480,7 @@ export function MapView() {
   const addWaypoint = useMissionStore((s) => s.addWaypoint);
   const addPoi = useMissionStore((s) => s.addPoi);
   const addObstacle = useMissionStore((s) => s.addObstacle);
+  const simulating = useSimulationStore((s) => s.active);
   const vizPrefs = usePreferencesStore((s) => s.preferences?.visualization);
   const [mapStyle, setMapStyle] = useState(
     vizPrefs?.mapStyle === "street"
@@ -487,7 +493,7 @@ export function MapView() {
   );
 
   const cursorClass =
-    templateMode === "pencil"
+    templateMode === "pencil" || templateMode === "corridor"
       ? "map-tool-pencil"
       : templateMode
         ? "map-tool-template"
@@ -583,6 +589,7 @@ export function MapView() {
         cursor={cursor}
         onClick={handleClick}
         doubleClickZoom={false}
+        boxZoom={false}
         id="main-map"
         terrain={is3D ? { source: "mapbox-dem", exaggeration: 1 } : undefined}
       >
@@ -602,6 +609,9 @@ export function MapView() {
         <TemplateDrawHandler />
         <PencilDrawHandler />
         <ObstacleDrawHandler />
+        <BoxSelectHandler />
+        <WindPanel />
+        <SimulationLayer is3D={is3D} />
         <AirspaceOverlay />
         {obstacles.map((obstacle) => (
           <ObstaclePolygon key={obstacle.id} obstacle={obstacle} />
@@ -609,7 +619,8 @@ export function MapView() {
         {waypoints.map((wp) => (
           <WaypointMarker key={wp.index} waypoint={wp} is3D={is3D} />
         ))}
-        {selectedWaypointIndices.size === 1 &&
+        {!simulating &&
+          selectedWaypointIndices.size === 1 &&
           (() => {
             const idx = [...selectedWaypointIndices][0];
             const wp = waypoints.find((w) => w.index === idx);
@@ -692,6 +703,7 @@ export function MapView() {
       </div>
 
       <MapToolbar />
+      <SimulationPlayer />
     </div>
   );
 }

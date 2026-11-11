@@ -3,7 +3,9 @@ import { useState } from "react";
 
 export interface Warning {
   id: string;
-  type: "battery" | "obstacle" | "airspace";
+  type: "battery" | "obstacle" | "airspace" | "wind";
+  /** Red styling for conditions that should stop the flight. */
+  critical?: boolean;
   message: string;
 }
 
@@ -22,7 +24,7 @@ export function WarningsPanel({ warnings }: WarningsPanelProps) {
   return (
     <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[1000] flex flex-col gap-1.5 pointer-events-none max-w-[600px] w-full px-4">
       {visible.map((w) => {
-        const isProhibited = w.id === "airspace-prohibited";
+        const isProhibited = w.id === "airspace-prohibited" || !!w.critical;
         const borderColor = isProhibited
           ? "border-red-400"
           : "border-orange-400";

@@ -2,8 +2,9 @@ import { Router } from "express";
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
 import type { Mission } from "@droneroute/shared";
+import { DEFAULT_MISSION_CONFIG } from "@droneroute/shared";
 import { generateKmzBuffer } from "../services/kmzGenerator.js";
-import { parseKmz } from "../services/kmzParser.js";
+import { ImportError, importMissionFile } from "../services/missionImport.js";
 import { getDb } from "../models/db.js";
 import {
   authMiddleware,
@@ -110,7 +111,7 @@ kmzRoutes.get(
   },
 );
 
-// Import KMZ file
+// Import a mission file: DJI WPML KMZ, plain KML/KMZ, GPX or Litchi CSV
 kmzRoutes.post(
   "/import",
   optionalAuth,
@@ -122,13 +123,26 @@ kmzRoutes.post(
         return;
       }
 
-      const { config, waypoints, pois } = await parseKmz(req.file.buffer);
+      let imported;
+      try {
+        imported = await importMissionFile(
+          req.file.buffer,
+          req.file.originalname,
+        );
+      } catch (err) {
+        if (err instanceof ImportError) {
+          res.status(400).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
+      const { format, config, waypoints, pois, warnings } = imported;
 
       const geometryError = validateMissionGeometry({ waypoints, pois });
       if (geometryError) {
         res
           .status(400)
-          .json({ error: `Invalid KMZ contents: ${geometryError}` });
+          .json({ error: `Invalid file contents: ${geometryError}` });
         return;
       }
 
@@ -140,24 +154,26 @@ kmzRoutes.post(
         const db = getDb();
         missionId = uuidv4();
         const name =
-          req.file.originalname.replace(/\.kmz$/i, "") || "Imported Mission";
+          req.file.originalname
+            .replace(/\.(kmz|kml|gpx|csv)$/i, "")
+            .slice(0, 200) || "Imported Mission";
         db.prepare(
           "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles) VALUES (?, ?, ?, ?, ?, ?, ?)",
         ).run(
           missionId,
           name,
           req.userId || null,
-          JSON.stringify(config),
+          JSON.stringify(config ?? DEFAULT_MISSION_CONFIG),
           JSON.stringify(waypoints),
           JSON.stringify(pois),
           "[]",
         );
       }
 
-      res.json({ id: missionId, config, waypoints, pois });
+      res.json({ id: missionId, format, config, waypoints, pois, warnings });
     } catch (err: any) {
-      console.error("KMZ import error:", err);
-      res.status(500).json({ error: "Failed to parse KMZ" });
+      console.error("Mission import error:", err);
+      res.status(500).json({ error: "Failed to read the file" });
     }
   },
 );

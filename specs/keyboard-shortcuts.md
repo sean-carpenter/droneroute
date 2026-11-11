@@ -4,19 +4,24 @@ Quick reference for all available keyboard shortcuts.
 
 ## Shortcuts
 
-| Key                        | What it does                                     |
-| -------------------------- | ------------------------------------------------ |
-| **W**                      | Enter waypoint placement mode                    |
-| **P**                      | Enter POI placement mode                         |
-| **O**                      | Open the orbit template                          |
-| **G**                      | Open the grid survey template                    |
-| **F**                      | Open the facade scan template                    |
-| **Z**                      | Open the pencil path template                    |
-| **B**                      | Enter obstacle drawing mode                      |
-| **A**                      | Toggle airspace restriction zones overlay        |
-| **Escape**                 | Cancel the current action or deselect everything |
-| **Delete** / **Backspace** | Remove the selected waypoint, POI, or obstacle   |
-| **Ctrl+A** / **Cmd+A**     | Select all waypoints                             |
+| Key                           | What it does                                     |
+| ----------------------------- | ------------------------------------------------ |
+| **W**                         | Enter waypoint placement mode                    |
+| **P**                         | Enter POI placement mode                         |
+| **O**                         | Open the orbit template                          |
+| **G**                         | Open the grid survey template                    |
+| **F**                         | Open the facade scan template                    |
+| **Z**                         | Open the pencil path template                    |
+| **C**                         | Open the corridor survey template                |
+| **T**                         | Open the tower inspection template               |
+| **B**                         | Enter obstacle drawing mode                      |
+| **A**                         | Toggle airspace restriction zones overlay        |
+| **Escape**                    | Cancel the current action or deselect everything |
+| **Delete** / **Backspace**    | Remove the selected waypoint, POI, or obstacle   |
+| **Ctrl+A** / **Cmd+A**        | Select all waypoints                             |
+| **Ctrl+Z** / **Cmd+Z**        | Undo the last change                             |
+| **Ctrl+Shift+Z** / **Ctrl+Y** | Redo                                             |
+| **Shift+drag** on the map     | Box-select the waypoints inside the rectangle    |
 
 ## Good to know
 

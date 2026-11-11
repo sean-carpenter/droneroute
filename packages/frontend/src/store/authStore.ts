@@ -116,6 +116,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       needsVerification: false,
     });
     useMissionStore.getState().clearMission();
+    useMissionStore.getState().clearHistory();
   },
 
   restore: () => {

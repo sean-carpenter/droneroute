@@ -4,6 +4,9 @@ import type {
   WaypointAction,
 } from "@droneroute/shared";
 import { DEFAULT_WAYPOINT } from "@droneroute/shared";
+import type { CameraModel } from "@/lib/camera";
+import { MAVIC_3E_CAMERA, footprintM, spacingFromOverlap } from "@/lib/camera";
+import { resolveGimbalAim, type GimbalStrategy } from "@/lib/geo";
 
 // ── Helpers ──────────────────────────────────────────────
 
@@ -72,7 +75,94 @@ function haversine(
 
 // ── Template Types ───────────────────────────────────────
 
-export type TemplateType = "orbit" | "grid" | "facade" | "pencil";
+export type TemplateType =
+  | "orbit"
+  | "grid"
+  | "facade"
+  | "pencil"
+  | "corridor"
+  | "tower";
+
+/**
+ * Camera aim chosen in a template. It is turned into a concrete
+ * `GimbalStrategy` for every waypoint, so the pitch follows the waypoint's
+ * altitude and position.
+ *
+ * `structureHeight` aims at the structure the template is built around (the
+ * wall in front of the drone, the orbit center, the tower axis) at a given
+ * height above ground: 0 is its base.
+ */
+export type TemplateAim =
+  | { mode: "fixed"; pitch: number }
+  | { mode: "towardPOI"; poiId: string }
+  | { mode: "structureHeight"; height: number }
+  | { mode: "relativeToSurface"; offsetDeg: number };
+
+export type TemplateAimMode = TemplateAim["mode"];
+
+type TemplatePoi = Pick<
+  PointOfInterest,
+  "id" | "latitude" | "longitude" | "height"
+>;
+
+/** The structure point a waypoint looks at, and how its surface is oriented. */
+interface AimAnchor {
+  latitude: number;
+  longitude: number;
+  /** 0 for a vertical surface (wall, tower), -90 for the ground. */
+  surfacePitchDeg: number;
+}
+
+/** Strategy for one waypoint, given the template aim and the waypoint's anchor. */
+export function aimToStrategy(
+  aim: TemplateAim,
+  anchor: Pick<AimAnchor, "latitude" | "longitude">,
+): GimbalStrategy {
+  if (aim.mode === "structureHeight") {
+    return {
+      mode: "towardPoint",
+      latitude: anchor.latitude,
+      longitude: anchor.longitude,
+      height: aim.height,
+    };
+  }
+  return aim;
+}
+
+/**
+ * Gimbal pitch (and, when tracking a POI, heading) for one generated waypoint.
+ * Spread the result over the waypoint after its default heading settings.
+ */
+function aimFields(
+  position: { latitude: number; longitude: number; height: number },
+  aim: TemplateAim,
+  anchor: AimAnchor,
+  pois: TemplatePoi[],
+  fallbackPitch: number,
+): Pick<Waypoint, "gimbalPitchAngle"> &
+  Partial<Pick<Waypoint, "headingMode" | "poiId" | "useGlobalHeadingParam">> {
+  const { gimbalPitchAngle, poiId } = resolveGimbalAim(
+    position,
+    aimToStrategy(aim, anchor),
+    { pois, surfacePitchDeg: anchor.surfacePitchDeg, fallbackPitch },
+  );
+  return poiId
+    ? {
+        gimbalPitchAngle,
+        useGlobalHeadingParam: false,
+        headingMode: "towardPOI",
+        poiId,
+      }
+    : { gimbalPitchAngle };
+}
+
+/**
+ * How photos are captured along a survey line:
+ * - `interval`: one waypoint per line end, photos triggered every N meters in flight
+ * - `waypoints`: one stop-and-shoot waypoint per photo
+ * - `ends`: a photo at each line end only
+ */
+export type SurveyPhotoMode = "interval" | "waypoints" | "ends";
 
 export interface OrbitParams {
   center: [number, number]; // [lat, lng]
@@ -81,6 +171,22 @@ export interface OrbitParams {
   numPoints: number;
   clockwise: boolean;
   createPoi: boolean;
+  aim: TemplateAim;
+}
+
+export interface TowerParams {
+  center: [number, number]; // [lat, lng] — axis of the structure
+  radiusM: number; // standoff from the axis
+  minAltitude: number;
+  maxAltitude: number;
+  /** Number of loops around the structure. */
+  turns: number;
+  pointsPerTurn: number;
+  /** `helix` climbs continuously; `stacked` flies level rings. */
+  style: "helix" | "stacked";
+  clockwise: boolean;
+  createPoi: boolean;
+  aim: TemplateAim;
 }
 
 export interface GridParams {
@@ -91,6 +197,27 @@ export interface GridParams {
   addPhotos: boolean;
   rotationDeg: number; // rotation of the grid in degrees (0-360)
   reverse: boolean; // fly the grid in reverse order
+  /** `photogrammetry` derives line spacing and photo interval from overlaps. */
+  mode: "fixedSpacing" | "photogrammetry";
+  sideOverlap: number; // 0–1, photogrammetry mode only
+  forwardOverlap: number; // 0–1, photogrammetry mode only
+  photoMode: SurveyPhotoMode; // photogrammetry mode only
+  camera?: CameraModel; // defaults to the Mavic 3E wide camera
+  /** Fly a second set of lines at 90° to the first. */
+  crossHatch: boolean;
+}
+
+export interface CorridorParams {
+  path: [number, number][]; // raw drawn centerline [lat, lng]
+  widthM: number; // total corridor width to cover
+  altitude: number;
+  sideOverlap: number; // 0–1
+  forwardOverlap: number; // 0–1
+  addPhotos: boolean;
+  photoMode: SurveyPhotoMode;
+  reverse: boolean;
+  camera?: CameraModel; // defaults to the Mavic 3E wide camera
+  aim: TemplateAim;
 }
 
 export interface FacadeParams {
@@ -102,6 +229,7 @@ export interface FacadeParams {
   numRows: number;
   numColumns: number;
   addPhotos: boolean;
+  aim: TemplateAim;
 }
 
 export interface PencilParams {
@@ -109,16 +237,18 @@ export interface PencilParams {
   numPoints: number; // target waypoint count
   altitude: number;
   speed: number;
-  gimbalPitchAngle: number;
   reverse: boolean;
-  poiId?: string; // optional POI to face during flight
+  /** `towardPOI` also turns the aircraft to face the POI during the flight. */
+  aim: TemplateAim;
 }
 
 export type TemplateParams =
   | OrbitParams
   | GridParams
   | FacadeParams
-  | PencilParams;
+  | PencilParams
+  | CorridorParams
+  | TowerParams;
 
 export interface TemplateResult {
   waypoints: Omit<Waypoint, "index" | "name">[];
@@ -132,6 +262,19 @@ export const DEFAULT_ORBIT_PARAMS: Omit<OrbitParams, "center" | "radiusM"> = {
   numPoints: 12,
   clockwise: true,
   createPoi: true,
+  aim: { mode: "structureHeight", height: 0 },
+};
+
+export const DEFAULT_TOWER_PARAMS: Omit<TowerParams, "center" | "radiusM"> = {
+  minAltitude: 10,
+  maxAltitude: 50,
+  turns: 4,
+  pointsPerTurn: 8,
+  style: "helix",
+  clockwise: true,
+  createPoi: true,
+  // Halfway up the default altitude range
+  aim: { mode: "structureHeight", height: 30 },
 };
 
 export const DEFAULT_GRID_PARAMS: Omit<GridParams, "corner1" | "corner2"> = {
@@ -140,6 +283,22 @@ export const DEFAULT_GRID_PARAMS: Omit<GridParams, "corner1" | "corner2"> = {
   addPhotos: true,
   rotationDeg: 0,
   reverse: false,
+  mode: "photogrammetry",
+  sideOverlap: 0.75,
+  forwardOverlap: 0.75,
+  photoMode: "interval",
+  crossHatch: false,
+};
+
+export const DEFAULT_CORRIDOR_PARAMS: Omit<CorridorParams, "path"> = {
+  widthM: 60,
+  altitude: 80,
+  sideOverlap: 0.75,
+  forwardOverlap: 0.75,
+  addPhotos: true,
+  photoMode: "interval",
+  reverse: false,
+  aim: { mode: "fixed", pitch: -90 },
 };
 
 export const DEFAULT_FACADE_PARAMS: Omit<FacadeParams, "point1" | "point2"> = {
@@ -149,49 +308,67 @@ export const DEFAULT_FACADE_PARAMS: Omit<FacadeParams, "point1" | "point2"> = {
   numRows: 4,
   numColumns: 8,
   addPhotos: true,
+  // Wall base, as before
+  aim: { mode: "structureHeight", height: 0 },
 };
 
 export const DEFAULT_PENCIL_PARAMS: Omit<PencilParams, "path"> = {
   numPoints: 10,
   altitude: 30,
   speed: 7,
-  gimbalPitchAngle: -45,
   reverse: false,
+  aim: { mode: "fixed", pitch: -45 },
 };
 
 // ── Generators ───────────────────────────────────────────
 
-export function generateOrbit(params: OrbitParams): TemplateResult {
-  const { center, radiusM, altitude, numPoints, clockwise, createPoi } = params;
+/** Heading in the -180..180 range DJI expects. */
+function normalizeHeading(deg: number): number {
+  const wrapped = ((deg % 360) + 360) % 360;
+  return Math.round(wrapped > 180 ? wrapped - 360 : wrapped);
+}
+
+/** POI at the center of an orbit/tower, at the height the camera aims for. */
+function centerPoi(
+  name: string,
+  center: [number, number],
+  aim: TemplateAim,
+): Omit<PointOfInterest, "id"> {
+  return {
+    name,
+    latitude: center[0],
+    longitude: center[1],
+    height: aim.mode === "structureHeight" ? aim.height : 0,
+  };
+}
+
+export function generateOrbit(
+  params: OrbitParams,
+  availablePois: TemplatePoi[] = [],
+): TemplateResult {
+  const { center, radiusM, altitude, numPoints, clockwise, createPoi, aim } =
+    params;
   const [cLat, cLng] = center;
 
   const waypoints: TemplateResult["waypoints"] = [];
   const pois: TemplateResult["pois"] = [];
 
   // Optionally create a POI at the center
-  const poiName = "Orbit center";
-
   if (createPoi) {
-    pois.push({ name: poiName, latitude: cLat, longitude: cLng, height: 0 });
+    pois.push(centerPoi("Orbit center", center, aim));
   }
+
+  const anchor: AimAnchor = {
+    latitude: cLat,
+    longitude: cLng,
+    surfacePitchDeg: 0,
+  };
 
   for (let i = 0; i < numPoints; i++) {
     const fraction = i / numPoints;
     // Start from North (0°), go clockwise or counter-clockwise
     const angleDeg = clockwise ? fraction * 360 : 360 - fraction * 360;
     const [lat, lng] = destinationPoint(cLat, cLng, radiusM, angleDeg);
-
-    // Calculate heading angle toward center
-    const headingAngle = bearing(lat, lng, cLat, cLng);
-    // Normalize to -180..180 range expected by DJI
-    const normalizedHeading =
-      headingAngle > 180 ? headingAngle - 360 : headingAngle;
-
-    // Calculate ideal gimbal pitch
-    const horizontalDist = radiusM;
-    const heightDiff = altitude; // drone is above POI at ground level
-    const pitchRad = Math.atan2(heightDiff, horizontalDist);
-    const gimbalPitch = Math.round(-pitchRad * (180 / Math.PI));
 
     waypoints.push({
       ...DEFAULT_WAYPOINT,
@@ -202,31 +379,241 @@ export function generateOrbit(params: OrbitParams): TemplateResult {
       useGlobalSpeed: false,
       useGlobalHeadingParam: false,
       headingMode: "fixed",
-      headingAngle: Math.round(normalizedHeading),
-      gimbalPitchAngle: gimbalPitch,
+      // Face the center
+      headingAngle: normalizeHeading(bearing(lat, lng, cLat, cLng)),
       turnMode: "toPointAndPassWithContinuityCurvature",
       useGlobalTurnParam: false,
       actions: [],
+      ...aimFields(
+        { latitude: lat, longitude: lng, height: altitude },
+        aim,
+        anchor,
+        availablePois,
+        -45,
+      ),
     });
   }
 
   return { waypoints, pois };
 }
 
+// ── Tower / helix ────────────────────────────────────────
+
+/** Hard cap on tower waypoints. */
+const MAX_TOWER_WAYPOINTS = 500;
+
+/**
+ * Inspect a tall structure by circling it while climbing: either one
+ * continuous spiral or a stack of level rings.
+ */
+export function generateTower(
+  params: TowerParams,
+  availablePois: TemplatePoi[] = [],
+): TemplateResult {
+  const { center, radiusM, style, clockwise, createPoi, aim } = params;
+  const [cLat, cLng] = center;
+  const turns = Math.max(1, Math.round(params.turns));
+  const pointsPerTurn = Math.max(3, Math.round(params.pointsPerTurn));
+  const minAltitude = Math.min(params.minAltitude, params.maxAltitude);
+  const maxAltitude = Math.max(params.minAltitude, params.maxAltitude);
+
+  const anchor: AimAnchor = {
+    latitude: cLat,
+    longitude: cLng,
+    surfacePitchDeg: 0,
+  };
+
+  // (angle, altitude) of every waypoint, bottom to top
+  const steps: { angleDeg: number; altitude: number }[] = [];
+  if (style === "helix") {
+    const total = turns * pointsPerTurn;
+    for (let i = 0; i <= total; i++) {
+      steps.push({
+        angleDeg: (i / pointsPerTurn) * 360,
+        altitude: minAltitude + (i / total) * (maxAltitude - minAltitude),
+      });
+    }
+  } else {
+    for (let ring = 0; ring < turns; ring++) {
+      const altitude =
+        turns === 1
+          ? minAltitude
+          : minAltitude + (ring / (turns - 1)) * (maxAltitude - minAltitude);
+      // Close each ring by returning to its first point before climbing
+      for (let i = 0; i <= pointsPerTurn; i++) {
+        steps.push({ angleDeg: (i / pointsPerTurn) * 360, altitude });
+      }
+    }
+  }
+
+  const waypoints: TemplateResult["waypoints"] = steps
+    .slice(0, MAX_TOWER_WAYPOINTS)
+    .map(({ angleDeg, altitude }) => {
+      const [lat, lng] = destinationPoint(
+        cLat,
+        cLng,
+        radiusM,
+        clockwise ? angleDeg : -angleDeg,
+      );
+      const height = Math.round(altitude * 10) / 10;
+      return {
+        ...DEFAULT_WAYPOINT,
+        latitude: lat,
+        longitude: lng,
+        height,
+        speed: 3,
+        useGlobalSpeed: false,
+        useGlobalHeadingParam: false,
+        headingMode: "fixed" as const,
+        headingAngle: normalizeHeading(bearing(lat, lng, cLat, cLng)),
+        turnMode: "toPointAndPassWithContinuityCurvature" as const,
+        useGlobalTurnParam: false,
+        actions: [],
+        ...aimFields(
+          { latitude: lat, longitude: lng, height },
+          aim,
+          anchor,
+          availablePois,
+          -30,
+        ),
+      };
+    });
+
+  return {
+    waypoints,
+    pois: createPoi ? [centerPoi("Tower center", center, aim)] : [],
+  };
+}
+
+// ── Survey lines (shared by grid and corridor) ──────────
+
+const TAKE_PHOTO: WaypointAction = {
+  actionId: 0,
+  actionType: "takePhoto",
+  params: { payloadPositionIndex: 0 },
+};
+
+/** Hard cap on generated survey waypoints, to keep the editor responsive. */
+export const MAX_SURVEY_WAYPOINTS = 2000;
+
+interface SurveyLineOptions {
+  altitude: number;
+  addPhotos: boolean;
+  photoMode: SurveyPhotoMode;
+  photoIntervalM: number;
+  aim?: TemplateAim; // defaults to straight down
+  pois?: TemplatePoi[];
+}
+
+/** Split a polyline so that no segment is longer than `maxStepM`. */
+function densifyPath(
+  path: [number, number][],
+  maxStepM: number,
+): [number, number][] {
+  if (path.length < 2 || !(maxStepM > 0)) return path;
+  const out: [number, number][] = [path[0]];
+  for (let i = 1; i < path.length; i++) {
+    const [aLat, aLng] = path[i - 1];
+    const [bLat, bLng] = path[i];
+    const len = haversine(aLat, aLng, bLat, bLng);
+    const steps = Math.max(1, Math.ceil(len / maxStepM - 1e-9));
+    for (let k = 1; k <= steps; k++) {
+      const t = k / steps;
+      out.push([aLat + t * (bLat - aLat), aLng + t * (bLng - aLng)]);
+    }
+  }
+  return out;
+}
+
+/** Turn a list of survey passes (polylines) into nadir waypoints. */
+function buildSurveyWaypoints(
+  passes: [number, number][][],
+  opts: SurveyLineOptions,
+): TemplateResult["waypoints"] {
+  const { altitude, addPhotos, photoMode, photoIntervalM } = opts;
+  const aim: TemplateAim = opts.aim ?? { mode: "fixed", pitch: -90 };
+  const waypoints: TemplateResult["waypoints"] = [];
+
+  for (const pass of passes) {
+    const perPhoto = addPhotos && photoMode === "waypoints";
+    const points = perPhoto ? densifyPath(pass, photoIntervalM) : pass;
+
+    points.forEach(([lat, lng], i) => {
+      const isEnd = i === 0 || i === points.length - 1;
+      const useInterval =
+        addPhotos && photoMode === "interval" && i < points.length - 1;
+      const stop = isEnd || perPhoto;
+      waypoints.push({
+        ...DEFAULT_WAYPOINT,
+        latitude: lat,
+        longitude: lng,
+        height: altitude,
+        useGlobalHeadingParam: false,
+        headingMode: "followWayline",
+        // The ground under the aircraft is the surface being surveyed
+        ...aimFields(
+          { latitude: lat, longitude: lng, height: altitude },
+          aim,
+          { latitude: lat, longitude: lng, surfacePitchDeg: -90 },
+          opts.pois ?? [],
+          -90,
+        ),
+        turnMode: stop
+          ? "toPointAndStopWithContinuityCurvature"
+          : "toPointAndPassWithContinuityCurvature",
+        useGlobalTurnParam: false,
+        ...(useInterval ? { photoIntervalM: round1(photoIntervalM) } : {}),
+        actions:
+          addPhotos && (perPhoto || (photoMode === "ends" && isEnd))
+            ? [{ ...TAKE_PHOTO }]
+            : [],
+      });
+    });
+  }
+
+  return waypoints.slice(0, MAX_SURVEY_WAYPOINTS);
+}
+
+function round1(v: number): number {
+  return Math.round(v * 10) / 10;
+}
+
+/** Line spacing and photo interval actually used by a grid, in meters. */
+export function gridSpacing(
+  params: Pick<
+    GridParams,
+    | "mode"
+    | "altitude"
+    | "spacingM"
+    | "sideOverlap"
+    | "forwardOverlap"
+    | "camera"
+  >,
+): { lineSpacingM: number; photoIntervalM: number } {
+  const camera = params.camera ?? MAVIC_3E_CAMERA;
+  const fromOverlap = spacingFromOverlap(
+    params.altitude,
+    params.sideOverlap,
+    params.forwardOverlap,
+    camera,
+  );
+  if (params.mode === "photogrammetry") return fromOverlap;
+  return {
+    lineSpacingM: params.spacingM,
+    photoIntervalM: fromOverlap.photoIntervalM,
+  };
+}
+
 export function generateGrid(params: GridParams): TemplateResult {
-  const {
-    corner1,
-    corner2,
-    altitude,
-    spacingM,
-    addPhotos,
-    rotationDeg,
-    reverse,
-  } = params;
+  const { corner1, corner2, altitude, addPhotos, rotationDeg, reverse } =
+    params;
   const [lat1, lng1] = corner1;
   const [lat2, lng2] = corner2;
 
-  const waypoints: TemplateResult["waypoints"] = [];
+  const { lineSpacingM, photoIntervalM } = gridSpacing(params);
+  // Fixed-spacing grids keep the original behavior: a photo at each line end.
+  const photoMode: SurveyPhotoMode =
+    params.mode === "photogrammetry" ? params.photoMode : "ends";
 
   // Determine bounding box
   const minLat = Math.min(lat1, lat2);
@@ -242,18 +629,8 @@ export function generateGrid(params: GridParams): TemplateResult {
   const widthM = haversine(minLat, minLng, minLat, maxLng);
   const heightM = haversine(minLat, minLng, maxLat, minLng);
 
-  // Determine if we fly N-S or E-W (fly along the longer axis)
-  const flyEW = widthM >= heightM;
-
-  // Number of passes
-  const crossAxisDist = flyEW ? heightM : widthM;
-  const numPasses = Math.max(2, Math.ceil(crossAxisDist / spacingM) + 1);
-
-  const takePhotoAction: WaypointAction = {
-    actionId: 0,
-    actionType: "takePhoto",
-    params: { payloadPositionIndex: 0 },
-  };
+  // Fly along the longer axis; a cross-hatch adds the other axis afterwards
+  const primaryEW = widthM >= heightM;
 
   // Rotation helper: rotate a lat/lng point around the center by rotationDeg degrees.
   // Uses equirectangular approximation (accurate enough for small areas).
@@ -274,70 +651,231 @@ export function generateGrid(params: GridParams): TemplateResult {
     return [centerLat + rLat, centerLng + rLng / cosCenter];
   }
 
-  for (let pass = 0; pass < numPasses; pass++) {
-    const fraction = numPasses <= 1 ? 0 : pass / (numPasses - 1);
-    const reverse = pass % 2 === 1; // lawn-mower pattern: alternate direction
+  const linesAlong = (flyEW: boolean): [number, number][][] => {
+    // Number of passes: lines sit on both edges and are spread evenly, so the
+    // real spacing is never wider than requested (overlap is never lower).
+    const crossAxisDist = flyEW ? heightM : widthM;
+    const numPasses = Math.min(
+      500,
+      Math.max(2, Math.ceil(crossAxisDist / Math.max(lineSpacingM, 1)) + 1),
+    );
+    const passes: [number, number][][] = [];
 
-    let wpLat1: number, wpLng1: number, wpLat2: number, wpLng2: number;
+    for (let pass = 0; pass < numPasses; pass++) {
+      const fraction = numPasses <= 1 ? 0 : pass / (numPasses - 1);
+      const flip = pass % 2 === 1; // lawn-mower pattern: alternate direction
 
-    if (flyEW) {
-      // Cross axis is N-S: each pass is a horizontal E-W line
-      const lat = minLat + fraction * (maxLat - minLat);
-      const startLng = reverse ? maxLng : minLng;
-      const endLng = reverse ? minLng : maxLng;
-      wpLat1 = lat;
-      wpLng1 = startLng;
-      wpLat2 = lat;
-      wpLng2 = endLng;
-    } else {
-      // Cross axis is E-W: each pass is a vertical N-S line
-      const lng = minLng + fraction * (maxLng - minLng);
-      const startLat = reverse ? maxLat : minLat;
-      const endLat = reverse ? minLat : maxLat;
-      wpLat1 = startLat;
-      wpLng1 = lng;
-      wpLat2 = endLat;
-      wpLng2 = lng;
+      let start: [number, number];
+      let end: [number, number];
+
+      if (flyEW) {
+        // Cross axis is N-S: each pass is a horizontal E-W line
+        const lat = minLat + fraction * (maxLat - minLat);
+        start = [lat, flip ? maxLng : minLng];
+        end = [lat, flip ? minLng : maxLng];
+      } else {
+        // Cross axis is E-W: each pass is a vertical N-S line
+        const lng = minLng + fraction * (maxLng - minLng);
+        start = [flip ? maxLat : minLat, lng];
+        end = [flip ? minLat : maxLat, lng];
+      }
+
+      passes.push([rotatePoint(...start), rotatePoint(...end)]);
     }
+    return passes;
+  };
 
-    // Apply rotation
-    const [rLat1, rLng1] = rotatePoint(wpLat1, wpLng1);
-    const [rLat2, rLng2] = rotatePoint(wpLat2, wpLng2);
-
-    waypoints.push({
-      ...DEFAULT_WAYPOINT,
-      latitude: rLat1,
-      longitude: rLng1,
-      height: altitude,
-      gimbalPitchAngle: -90,
-      useGlobalHeadingParam: false,
-      headingMode: "followWayline",
-      turnMode: "toPointAndStopWithContinuityCurvature",
-      useGlobalTurnParam: false,
-      actions: addPhotos ? [{ ...takePhotoAction, actionId: 0 }] : [],
-    });
-    waypoints.push({
-      ...DEFAULT_WAYPOINT,
-      latitude: rLat2,
-      longitude: rLng2,
-      height: altitude,
-      gimbalPitchAngle: -90,
-      useGlobalHeadingParam: false,
-      headingMode: "followWayline",
-      turnMode: "toPointAndStopWithContinuityCurvature",
-      useGlobalTurnParam: false,
-      actions: addPhotos ? [{ ...takePhotoAction, actionId: 0 }] : [],
-    });
+  let passes = linesAlong(primaryEW);
+  if (params.crossHatch) {
+    passes = [...passes, ...linesAlong(!primaryEW)];
   }
 
   if (reverse) {
-    waypoints.reverse();
+    passes = passes.reverse().map((p) => [...p].reverse());
   }
 
-  return { waypoints, pois: [] };
+  return {
+    waypoints: buildSurveyWaypoints(passes, {
+      altitude,
+      addPhotos,
+      photoMode,
+      photoIntervalM,
+    }),
+    pois: [],
+  };
 }
 
-export function generateFacade(params: FacadeParams): TemplateResult {
+// ── Corridor (linear survey along a centerline) ─────────
+
+const EARTH_R = 6371000;
+const DEG = Math.PI / 180;
+
+/** Project [lat, lng] points to local east/north meters around an origin. */
+function toLocal(
+  points: [number, number][],
+  origin: [number, number],
+): [number, number][] {
+  const cos0 = Math.cos(origin[0] * DEG);
+  return points.map(([lat, lng]) => [
+    (lng - origin[1]) * DEG * EARTH_R * cos0,
+    (lat - origin[0]) * DEG * EARTH_R,
+  ]);
+}
+
+function fromLocal(
+  points: [number, number][],
+  origin: [number, number],
+): [number, number][] {
+  const cos0 = Math.cos(origin[0] * DEG);
+  return points.map(([x, y]) => [
+    origin[0] + y / (DEG * EARTH_R),
+    origin[1] + x / (DEG * EARTH_R * cos0),
+  ]);
+}
+
+/** Douglas–Peucker simplification of a polyline in local meters. */
+function simplifyLocal(
+  points: [number, number][],
+  toleranceM: number,
+): [number, number][] {
+  if (points.length <= 2) return points;
+  const keep: boolean[] = points.map(() => false);
+  keep[0] = keep[points.length - 1] = true;
+  const stack: [number, number][] = [[0, points.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop()!;
+    const [ax, ay] = points[a];
+    const [bx, by] = points[b];
+    const len = Math.hypot(bx - ax, by - ay);
+    let maxD = 0;
+    let maxI = -1;
+    for (let i = a + 1; i < b; i++) {
+      const [px, py] = points[i];
+      const d =
+        len === 0
+          ? Math.hypot(px - ax, py - ay)
+          : Math.abs((bx - ax) * (ay - py) - (ax - px) * (by - ay)) / len;
+      if (d > maxD) {
+        maxD = d;
+        maxI = i;
+      }
+    }
+    if (maxI !== -1 && maxD > toleranceM) {
+      keep[maxI] = true;
+      stack.push([a, maxI], [maxI, b]);
+    }
+  }
+  return points.filter((_, i) => keep[i]);
+}
+
+/** Offset a polyline sideways by `offsetM` (positive = left of travel). */
+function offsetLocal(
+  points: [number, number][],
+  offsetM: number,
+): [number, number][] {
+  if (offsetM === 0) return points;
+  const normals: [number, number][] = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const dx = points[i + 1][0] - points[i][0];
+    const dy = points[i + 1][1] - points[i][1];
+    const len = Math.hypot(dx, dy) || 1;
+    normals.push([-dy / len, dx / len]);
+  }
+  return points.map(([x, y], i) => {
+    const n1 = normals[Math.max(0, i - 1)];
+    const n2 = normals[Math.min(normals.length - 1, i)];
+    let mx = n1[0] + n2[0];
+    let my = n1[1] + n2[1];
+    const mLen = Math.hypot(mx, my);
+    if (mLen < 1e-6) return [x + n1[0] * offsetM, y + n1[1] * offsetM];
+    mx /= mLen;
+    my /= mLen;
+    // Miter length grows at sharp corners; cap it so offsets stay sane.
+    const cosHalf = Math.max(0.35, mx * n1[0] + my * n1[1]);
+    const scale = offsetM / cosHalf;
+    return [x + mx * scale, y + my * scale];
+  });
+}
+
+/** Simplified centerline and the parallel lines needed to cover a corridor. */
+export function corridorLayout(params: CorridorParams): {
+  centerline: [number, number][];
+  lineOffsetsM: number[];
+  lineSpacingM: number;
+  photoIntervalM: number;
+} {
+  const camera = params.camera ?? MAVIC_3E_CAMERA;
+  const { lineSpacingM, photoIntervalM } = spacingFromOverlap(
+    params.altitude,
+    params.sideOverlap,
+    params.forwardOverlap,
+    camera,
+  );
+  const { widthM: swathM } = footprintM(params.altitude, camera);
+
+  // n lines spaced s apart cover (n - 1) * s + swath
+  const numLines = Math.min(
+    50,
+    Math.max(
+      1,
+      Math.ceil((params.widthM - swathM) / Math.max(lineSpacingM, 1) - 1e-9) +
+        1,
+    ),
+  );
+  const lineOffsetsM = Array.from(
+    { length: numLines },
+    (_, i) => (i - (numLines - 1) / 2) * lineSpacingM,
+  );
+
+  let centerline: [number, number][] = [];
+  if (params.path.length >= 2) {
+    const origin = params.path[0];
+    const tolerance = Math.max(2, Math.min(10, params.widthM / 15));
+    centerline = fromLocal(
+      simplifyLocal(toLocal(params.path, origin), tolerance),
+      origin,
+    );
+  }
+
+  return { centerline, lineOffsetsM, lineSpacingM, photoIntervalM };
+}
+
+export function generateCorridor(
+  params: CorridorParams,
+  availablePois: TemplatePoi[] = [],
+): TemplateResult {
+  const { centerline, lineOffsetsM, photoIntervalM } = corridorLayout(params);
+  if (centerline.length < 2) return { waypoints: [], pois: [] };
+
+  const origin = centerline[0];
+  const local = toLocal(centerline, origin);
+
+  let passes = lineOffsetsM.map((offset, i) => {
+    const line = fromLocal(offsetLocal(local, offset), origin);
+    return i % 2 === 1 ? line.reverse() : line; // lawn-mower order
+  });
+
+  if (params.reverse) {
+    passes = passes.reverse().map((p) => [...p].reverse());
+  }
+
+  return {
+    waypoints: buildSurveyWaypoints(passes, {
+      altitude: params.altitude,
+      addPhotos: params.addPhotos,
+      photoMode: params.photoMode,
+      photoIntervalM,
+      aim: params.aim,
+      pois: availablePois,
+    }),
+    pois: [],
+  };
+}
+
+export function generateFacade(
+  params: FacadeParams,
+  availablePois: TemplatePoi[] = [],
+): TemplateResult {
   const {
     point1,
     point2,
@@ -347,6 +885,7 @@ export function generateFacade(params: FacadeParams): TemplateResult {
     numRows,
     numColumns,
     addPhotos,
+    aim,
   } = params;
   const [lat1, lng1] = point1;
   const [lat2, lng2] = point2;
@@ -387,11 +926,6 @@ export function generateFacade(params: FacadeParams): TemplateResult {
       const normalizedHeading =
         headingToWall > 180 ? headingToWall - 360 : headingToWall;
 
-      // Gimbal: calculate pitch toward wall point at ground level
-      const heightDiff = alt; // drone altitude above wall base
-      const pitchRad = Math.atan2(heightDiff, distanceM);
-      const gimbalPitch = Math.round(-pitchRad * (180 / Math.PI));
-
       waypoints.push({
         ...DEFAULT_WAYPOINT,
         latitude: wpLat,
@@ -402,7 +936,6 @@ export function generateFacade(params: FacadeParams): TemplateResult {
         useGlobalHeadingParam: false,
         headingMode: "fixed",
         headingAngle: Math.round(normalizedHeading),
-        gimbalPitchAngle: gimbalPitch,
         turnMode: "toPointAndStopWithContinuityCurvature",
         useGlobalTurnParam: false,
         actions: addPhotos
@@ -414,6 +947,16 @@ export function generateFacade(params: FacadeParams): TemplateResult {
               },
             ]
           : [],
+        // The wall point straight in front of this column is the anchor, so
+        // the pitch changes with altitude: aiming at the base looks further
+        // down as the drone climbs, aiming at a height band levels off.
+        ...aimFields(
+          { latitude: wpLat, longitude: wpLng, height: alt },
+          aim,
+          { latitude: wallLat, longitude: wallLng, surfacePitchDeg: 0 },
+          availablePois,
+          0,
+        ),
       });
     }
   }
@@ -475,15 +1018,15 @@ export function pathLength(path: [number, number][]): number {
   return total;
 }
 
-export function generatePencil(params: PencilParams): TemplateResult {
-  const { path, numPoints, altitude, speed, gimbalPitchAngle, reverse, poiId } =
-    params;
+export function generatePencil(
+  params: PencilParams,
+  availablePois: TemplatePoi[] = [],
+): TemplateResult {
+  const { path, numPoints, altitude, speed, reverse, aim } = params;
 
   if (path.length < 2 || numPoints < 2) return { waypoints: [], pois: [] };
 
   const resampled = resamplePath(path, numPoints);
-
-  const useTowardPoi = !!poiId;
 
   const waypoints: TemplateResult["waypoints"] = resampled.map(
     ([lat, lng]) => ({
@@ -494,14 +1037,19 @@ export function generatePencil(params: PencilParams): TemplateResult {
       speed,
       useGlobalSpeed: false,
       useGlobalHeadingParam: false,
-      headingMode: useTowardPoi
-        ? ("towardPOI" as const)
-        : ("followWayline" as const),
-      ...(useTowardPoi ? { poiId } : {}),
-      gimbalPitchAngle,
+      headingMode: "followWayline" as const,
       turnMode: "toPointAndPassWithContinuityCurvature" as const,
       useGlobalTurnParam: false,
       actions: [],
+      // Toward a POI, both heading and pitch follow it from every waypoint.
+      // The ground below is the reference surface for the other modes.
+      ...aimFields(
+        { latitude: lat, longitude: lng, height: altitude },
+        aim,
+        { latitude: lat, longitude: lng, surfacePitchDeg: -90 },
+        availablePois,
+        -45,
+      ),
     }),
   );
 

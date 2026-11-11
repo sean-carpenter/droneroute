@@ -119,12 +119,16 @@ function buildActionXml(action: WaypointAction): string {
           </wpml:action>`;
 }
 
-function buildActionGroupXml(wp: Waypoint, groupIdOffset: number): string {
-  if (wp.actions.length === 0) return "";
+function buildActionGroupXml(
+  wp: Waypoint,
+  groupIdOffset: number,
+  waypointCount: number,
+): string {
+  let xml = "";
 
-  const actionsXml = wp.actions.map(buildActionXml).join("");
-
-  return `
+  if (wp.actions.length > 0) {
+    const actionsXml = wp.actions.map(buildActionXml).join("");
+    xml += `
         <wpml:actionGroup>
           <wpml:actionGroupId>${groupIdOffset}</wpml:actionGroupId>
           <wpml:actionGroupStartIndex>${wp.index}</wpml:actionGroupStartIndex>
@@ -134,6 +138,35 @@ function buildActionGroupXml(wp: Waypoint, groupIdOffset: number): string {
             <wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>
           </wpml:actionTrigger>${actionsXml}
         </wpml:actionGroup>`;
+  }
+
+  // Distance-interval capture on the leg from this waypoint to the next.
+  // Group ids must be unique within the file, so these start after the
+  // per-waypoint ids.
+  const interval = Number(wp.photoIntervalM);
+  if (
+    Number.isFinite(interval) &&
+    interval > 0 &&
+    wp.index < waypointCount - 1
+  ) {
+    xml += `
+        <wpml:actionGroup>
+          <wpml:actionGroupId>${waypointCount + groupIdOffset}</wpml:actionGroupId>
+          <wpml:actionGroupStartIndex>${wp.index}</wpml:actionGroupStartIndex>
+          <wpml:actionGroupEndIndex>${wp.index + 1}</wpml:actionGroupEndIndex>
+          <wpml:actionGroupMode>sequence</wpml:actionGroupMode>
+          <wpml:actionTrigger>
+            <wpml:actionTriggerType>multipleDistance</wpml:actionTriggerType>
+            <wpml:actionTriggerParam>${interval}</wpml:actionTriggerParam>
+          </wpml:actionTrigger>${buildActionXml({
+            actionId: 0,
+            actionType: "takePhoto",
+            params: { payloadPositionIndex: 0 },
+          })}
+        </wpml:actionGroup>`;
+  }
+
+  return xml;
 }
 
 // ── Template KML ─────────────────────────────────────────
@@ -145,7 +178,11 @@ export function buildTemplateKml(mission: Mission): string {
 
   const placemarks = mission.waypoints
     .map((wp, i) => {
-      const actionGroupXml = buildActionGroupXml(wp, i);
+      const actionGroupXml = buildActionGroupXml(
+        wp,
+        i,
+        mission.waypoints.length,
+      );
 
       // Build per-waypoint heading param when using towardPOI
       let headingOverrideXml = "";
@@ -233,7 +270,11 @@ export function buildWaylinesWpml(mission: Mission): string {
 
   const placemarks = mission.waypoints
     .map((wp, i) => {
-      const actionGroupXml = buildActionGroupXml(wp, i);
+      const actionGroupXml = buildActionGroupXml(
+        wp,
+        i,
+        mission.waypoints.length,
+      );
       const headingMode = wp.useGlobalHeadingParam
         ? c.globalHeadingMode
         : wp.headingMode || c.globalHeadingMode;

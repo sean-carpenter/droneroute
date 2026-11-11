@@ -21,6 +21,7 @@ import {
   CircleHelp,
   Triangle,
   Shield,
+  BatteryWarning,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +49,16 @@ import { formatDistance } from "@/lib/units";
 import { useAirspaceStore } from "@/store/airspaceStore";
 import { api } from "@/lib/api";
 import { getObstacleWarnings, getAirspaceWarnings } from "@/lib/geo";
+import { estimateMission, formatDuration } from "@/lib/missionStats";
+import { useWindStore } from "@/store/windStore";
+import { useSimulationStore } from "@/store/simulationStore";
+import { windAdvisory } from "@/lib/wind";
+import {
+  ImportPreviewDialog,
+  type ImportResult,
+} from "@/components/mission/ImportPreviewDialog";
+
+const IMPORT_ACCEPT = ".kmz,.kml,.gpx,.csv";
 
 type SidebarSection = "waypoints" | "pois" | "obstacles" | "config";
 
@@ -84,6 +95,10 @@ export default function App() {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingImport, setPendingImport] = useState<{
+    fileName: string;
+    result: ImportResult;
+  } | null>(null);
 
   const { token, email: userEmail, logout, restore, isAdmin } = useAuthStore();
   const { selfHosted } = useConfigStore();
@@ -150,14 +165,14 @@ export default function App() {
     [waypoints, airspaceZones, airspaceEnabled],
   );
 
-  // Compute flight stats for warnings
+  // Flight estimates: distance, time, photos and batteries
   const flightStats = useMemo(
-    () =>
-      waypoints.length >= 2
-        ? estimateFlightStats(waypoints, config.autoFlightSpeed)
-        : null,
-    [waypoints, config.autoFlightSpeed],
+    () => (waypoints.length >= 2 ? estimateMission(waypoints, config) : null),
+    [waypoints, config],
   );
+
+  // Wind advisory (only when the user turned the wind overlay on)
+  const windReading = useWindStore((s) => (s.enabled ? s.reading : null));
 
   // Aggregated warnings for overlay
   const warnings = useMemo(() => {
@@ -169,12 +184,28 @@ export default function App() {
         message: `${obstacleWarnings.length} obstacle warning${obstacleWarnings.length > 1 ? "s" : ""} — waypoints conflict with restricted zones`,
       });
     }
-    if (flightStats && flightStats.time > config.maxBatteryMinutes * 60) {
+    if (flightStats && flightStats.batteriesNeeded > 1) {
+      const swaps = flightStats.batterySwapAfter
+        .slice(0, 4)
+        .map((pos) => `WP ${pos + 1}`)
+        .join(", ");
+      const more = flightStats.batterySwapAfter.length > 4 ? "…" : "";
       result.push({
         id: "battery",
         type: "battery",
-        message: `Flight time (${formatDuration(flightStats.time)}) exceeds max battery (${config.maxBatteryMinutes}min)`,
+        message: `Flight time (${formatDuration(flightStats.estimatedFlightTimeS)}) needs ${flightStats.batteriesNeeded} batteries at ${config.maxBatteryMinutes} min each — plan a swap after ${swaps}${more}`,
       });
+    }
+    if (windReading) {
+      const advisory = windAdvisory(windReading);
+      if (advisory.severity !== "ok") {
+        result.push({
+          id: `wind-${advisory.severity}`,
+          type: "wind",
+          critical: advisory.severity === "danger",
+          message: advisory.message,
+        });
+      }
     }
     // Airspace zone warnings
     const prohibitedCount = airspaceWarnings.filter(
@@ -204,6 +235,7 @@ export default function App() {
     flightStats,
     config.maxBatteryMinutes,
     airspaceWarnings,
+    windReading,
   ]);
 
   // Compute Gravatar URL when email changes
@@ -292,32 +324,70 @@ export default function App() {
     }
   };
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  // Read a mission file on the server and show what it contains before
+  // anything in the editor changes.
+  const importFile = async (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
-
     try {
-      const result = await api.post<{
-        config: any;
-        waypoints: any[];
-        pois?: any[];
-      }>("/kmz/import", formData);
-      loadMission({
-        name: file.name.replace(/\.kmz$/i, ""),
-        config: result.config,
-        waypoints: result.waypoints,
-        pois: result.pois,
-      });
+      const result = await api.post<ImportResult>("/kmz/import", formData);
+      setPendingImport({ fileName: file.name, result });
     } catch (err: any) {
       toast.error(`Import failed: ${err.message}`);
     }
+  };
 
-    // Reset file input
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) await importFile(file);
+    // Reset file input so the same file can be picked again
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
+
+  const applyImport = (mode: "replace" | "append") => {
+    if (!pendingImport) return;
+    const { fileName, result } = pendingImport;
+    if (mode === "replace") {
+      loadMission({
+        name: fileName.replace(/\.(kmz|kml|gpx|csv)$/i, ""),
+        config: result.config ?? config,
+        waypoints: result.waypoints,
+        pois: result.pois,
+      });
+    } else {
+      useMissionStore.getState().appendImported(result.waypoints, result.pois);
+    }
+    setPendingImport(null);
+  };
+
+  // Drop a mission file anywhere on the editor to import it
+  const importFileRef = useRef(importFile);
+  importFileRef.current = importFile;
+  useEffect(() => {
+    if (currentPage !== "editor") return;
+    const hasFiles = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    const onDragOver = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      if (!/\.(kmz|kml|gpx|csv)$/i.test(file.name)) {
+        toast.warning("Drop a KMZ, KML, GPX or Litchi CSV file to import");
+        return;
+      }
+      void importFileRef.current(file);
+    };
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [currentPage]);
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -368,9 +438,29 @@ export default function App() {
           setTemplateMode(templateMode === "facade" ? null : "facade");
           break;
         case "z":
-          if (e.metaKey || e.ctrlKey) return; // don't intercept Cmd+Z (undo)
           e.preventDefault();
-          setTemplateMode(templateMode === "pencil" ? null : "pencil");
+          if (e.metaKey || e.ctrlKey) {
+            if (e.shiftKey) useMissionStore.getState().redo();
+            else useMissionStore.getState().undo();
+          } else {
+            setTemplateMode(templateMode === "pencil" ? null : "pencil");
+          }
+          break;
+        case "y":
+          if (e.metaKey || e.ctrlKey) {
+            e.preventDefault();
+            useMissionStore.getState().redo();
+          }
+          break;
+        case "t":
+          if (e.metaKey || e.ctrlKey) return; // don't intercept new tab
+          e.preventDefault();
+          setTemplateMode(templateMode === "tower" ? null : "tower");
+          break;
+        case "c":
+          if (e.metaKey || e.ctrlKey) return; // don't intercept copy
+          e.preventDefault();
+          setTemplateMode(templateMode === "corridor" ? null : "corridor");
           break;
         case "b":
           if (e.metaKey || e.ctrlKey) return;
@@ -394,6 +484,7 @@ export default function App() {
           setIsAddingPoi(false);
           setIsDrawingObstacle(false);
           setTemplateMode(null);
+          useSimulationStore.getState().close();
           break;
         case "delete":
         case "backspace":
@@ -532,15 +623,15 @@ export default function App() {
             size="sm"
             onClick={() => fileInputRef.current?.click()}
             className="flex-1 text-xs h-7 border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/15 hover:text-blue-300"
-            title="Import a DJI KMZ file"
+            title="Import a DJI KMZ, KML, GPX or Litchi CSV file (or drop one on the page)"
           >
             <Upload className="h-3 w-3" />
-            Import KMZ
+            Import
           </Button>
           <input
             ref={fileInputRef}
             type="file"
-            accept=".kmz"
+            accept={IMPORT_ACCEPT}
             className="hidden"
             onChange={handleImport}
           />
@@ -644,25 +735,14 @@ export default function App() {
         <div className="px-3 py-2 border-t border-border flex items-center justify-between">
           <div className="flex items-center gap-3">
             {(() => {
-              const photoCount = waypoints.reduce(
-                (sum, wp) =>
-                  sum +
-                  wp.actions.filter((a) => a.actionType === "takePhoto").length,
-                0,
-              );
-              const videoCount = waypoints.reduce(
-                (sum, wp) =>
-                  sum +
-                  wp.actions.filter((a) => a.actionType === "startRecord")
-                    .length,
-                0,
-              );
+              const photoCount = flightStats?.photoCount ?? 0;
+              const videoCount = flightStats?.videoCount ?? 0;
               return (
                 <>
                   {photoCount > 0 && (
                     <span
                       className="flex items-center gap-1 text-[11px]"
-                      title="Photo actions"
+                      title="Estimated photos (actions and interval capture)"
                     >
                       <Camera className="h-3 w-3 text-sky-400" />
                       <span className="text-sky-300 font-medium">
@@ -681,6 +761,17 @@ export default function App() {
                       </span>
                     </span>
                   )}
+                  {flightStats && flightStats.batteriesNeeded > 1 && (
+                    <span
+                      className="flex items-center gap-1 text-[11px]"
+                      title={`Needs ${flightStats.batteriesNeeded} batteries at ${config.maxBatteryMinutes} min each`}
+                    >
+                      <BatteryWarning className="h-3 w-3 text-orange-400" />
+                      <span className="text-orange-300 font-medium">
+                        ×{flightStats.batteriesNeeded}
+                      </span>
+                    </span>
+                  )}
                 </>
               );
             })()}
@@ -688,13 +779,10 @@ export default function App() {
           <div className="flex items-center gap-3">
             {waypoints.length >= 2 && flightStats
               ? (() => {
-                  const { distance, time } = flightStats;
-                  const elevGain = waypoints.reduce((sum, wp, i) => {
-                    if (i === 0) return 0;
-                    const diff = wp.height - waypoints[i - 1].height;
-                    return sum + (diff > 0 ? diff : 0);
-                  }, 0);
-                  const exceedsBattery = time > config.maxBatteryMinutes * 60;
+                  const distance = flightStats.totalDistanceM;
+                  const time = flightStats.estimatedFlightTimeS;
+                  const elevGain = Math.round(flightStats.elevationGainM);
+                  const exceedsBattery = flightStats.batteriesNeeded > 1;
                   return (
                     <>
                       {elevGain > 0 && (
@@ -721,8 +809,8 @@ export default function App() {
                         className="flex items-center gap-1 text-[11px]"
                         title={
                           exceedsBattery
-                            ? `Exceeds max battery (${config.maxBatteryMinutes}min)`
-                            : "Estimated flight time"
+                            ? `Exceeds one battery (${config.maxBatteryMinutes} min)`
+                            : `Estimated flight time — about ${Math.round(flightStats.estimatedBatteryPercent)}% of one battery, excluding take-off and return`
                         }
                       >
                         <Clock
@@ -811,64 +899,17 @@ export default function App() {
         <AccountModal onClose={() => setShowAccountMenu(false)} />
       )}
       {showAbout && <AboutDialog onClose={() => setShowAbout(false)} />}
+      {pendingImport && (
+        <ImportPreviewDialog
+          fileName={pendingImport.fileName}
+          result={pendingImport.result}
+          canAppend={waypoints.length > 0}
+          onReplace={() => applyImport("replace")}
+          onAppend={() => applyImport("append")}
+          onCancel={() => setPendingImport(null)}
+        />
+      )}
       <WelcomeDialog />
     </div>
   );
-}
-
-// Haversine distance between two points (meters)
-function haversine(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number,
-): number {
-  const R = 6371000;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-// Estimate total distance (m) and flight time (s) using per-segment speeds
-function estimateFlightStats(
-  waypoints: {
-    latitude: number;
-    longitude: number;
-    speed: number;
-    useGlobalSpeed: boolean;
-  }[],
-  globalSpeed: number,
-): { distance: number; time: number } {
-  let distance = 0;
-  let time = 0;
-  for (let i = 1; i < waypoints.length; i++) {
-    const prev = waypoints[i - 1];
-    const curr = waypoints[i];
-    const segDist = haversine(
-      prev.latitude,
-      prev.longitude,
-      curr.latitude,
-      curr.longitude,
-    );
-    const speed = curr.useGlobalSpeed ? globalSpeed : curr.speed;
-    distance += segDist;
-    time += speed > 0 ? segDist / speed : 0;
-  }
-  return { distance, time };
-}
-
-// Format seconds into human-readable duration
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.round(seconds % 60);
-  if (mins < 60) return `${mins}m${secs > 0 ? ` ${secs}s` : ""}`;
-  const hrs = Math.floor(mins / 60);
-  const remainMins = mins % 60;
-  return `${hrs}h${remainMins > 0 ? ` ${remainMins}m` : ""}`;
 }

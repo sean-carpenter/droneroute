@@ -28,8 +28,8 @@ export function haversineDistance(
  * Returns degrees where 0 = horizon, -90 = straight down, plus the 3D slant distance.
  */
 export function calculateIdealGimbalPitch(
-  wp: Waypoint,
-  poi: PointOfInterest,
+  wp: Pick<Waypoint, "latitude" | "longitude" | "height">,
+  poi: Pick<PointOfInterest, "latitude" | "longitude" | "height">,
 ): { pitch: number; distance: number } {
   const horizontalDist = haversineDistance(
     wp.latitude,
@@ -43,6 +43,100 @@ export function calculateIdealGimbalPitch(
   const pitch = Math.round(-angleRad * (180 / Math.PI));
   const distance = Math.sqrt(horizontalDist ** 2 + heightDiff ** 2);
   return { pitch, distance };
+}
+
+// ── Gimbal strategy ──────────────────────────────────────
+
+/** How the camera should be aimed at a waypoint. */
+export type GimbalStrategy =
+  | { mode: "fixed"; pitch: number }
+  | { mode: "towardPOI"; poiId: string }
+  | {
+      mode: "towardPoint";
+      latitude: number;
+      longitude: number;
+      height: number;
+    }
+  /** A fixed number of degrees away from looking straight at the surface. */
+  | { mode: "relativeToSurface"; offsetDeg: number };
+
+/** Gimbal pitch limits used for generated waypoints (Mavic 3E tilt range). */
+export const GIMBAL_PITCH_MIN = -90;
+export const GIMBAL_PITCH_MAX = 35;
+
+export function clampGimbalPitch(pitch: number): number {
+  // "+ 0" turns a negative zero (level with the target) into a plain 0
+  return Math.min(GIMBAL_PITCH_MAX, Math.max(GIMBAL_PITCH_MIN, pitch)) + 0;
+}
+
+export interface GimbalAimContext {
+  /** POIs available to `towardPOI` strategies. */
+  pois?: Pick<PointOfInterest, "id" | "latitude" | "longitude" | "height">[];
+  /**
+   * Pitch of the line of sight perpendicular to the surface being inspected:
+   * 0 for a wall or tower (look straight at it), -90 for the ground.
+   */
+  surfacePitchDeg?: number;
+  /** Used when a `towardPOI` strategy names a POI that no longer exists. */
+  fallbackPitch?: number;
+}
+
+export interface GimbalAim {
+  gimbalPitchAngle: number;
+  /** Set when the camera tracks a POI, so the heading can follow it too. */
+  poiId?: string;
+}
+
+/**
+ * Resolve a gimbal strategy to a concrete pitch for one camera position.
+ * Pure: the same position, strategy and POIs always give the same answer, so
+ * regenerated inspection missions aim exactly as before.
+ */
+export function resolveGimbalAim(
+  position: Pick<Waypoint, "latitude" | "longitude" | "height">,
+  strategy: GimbalStrategy,
+  context: GimbalAimContext = {},
+): GimbalAim {
+  switch (strategy.mode) {
+    case "fixed":
+      return { gimbalPitchAngle: clampGimbalPitch(Math.round(strategy.pitch)) };
+
+    case "towardPOI": {
+      const poi = context.pois?.find((p) => p.id === strategy.poiId);
+      if (!poi) {
+        return {
+          gimbalPitchAngle: clampGimbalPitch(
+            Math.round(context.fallbackPitch ?? -45),
+          ),
+        };
+      }
+      return {
+        gimbalPitchAngle: clampGimbalPitch(
+          calculateIdealGimbalPitch(position, poi).pitch,
+        ),
+        poiId: poi.id,
+      };
+    }
+
+    case "towardPoint":
+      return {
+        gimbalPitchAngle: clampGimbalPitch(
+          calculateIdealGimbalPitch(position, strategy).pitch,
+        ),
+      };
+
+    case "relativeToSurface": {
+      const perpendicular = context.surfacePitchDeg ?? 0;
+      // Facing a wall, the offset tilts the camera down from level. Over the
+      // ground the camera already points straight down, so the offset tilts
+      // it up toward the horizon instead (an oblique view).
+      const pitch =
+        perpendicular <= -90
+          ? -90 + Math.abs(strategy.offsetDeg)
+          : perpendicular - strategy.offsetDeg;
+      return { gimbalPitchAngle: clampGimbalPitch(Math.round(pitch)) };
+    }
+  }
 }
 
 // ── Obstacle geometry utilities ──────────────────────────

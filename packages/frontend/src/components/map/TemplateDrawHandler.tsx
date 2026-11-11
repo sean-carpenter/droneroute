@@ -1,18 +1,22 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { Source, Layer, Marker, useMap } from "react-map-gl/mapbox";
 import { useMissionStore } from "@/store/missionStore";
+import { cameraForPayload } from "@/lib/camera";
 import { TemplateConfigPanel } from "./TemplateConfigPanel";
 import { TemplatePreview } from "./TemplatePreview";
 import type {
   OrbitParams,
   GridParams,
   FacadeParams,
+  TowerParams,
   TemplateResult,
 } from "@/lib/templates";
 import {
   generateOrbit,
   generateGrid,
   generateFacade,
+  generateTower,
+  DEFAULT_TOWER_PARAMS,
   DEFAULT_ORBIT_PARAMS,
   DEFAULT_GRID_PARAMS,
   DEFAULT_FACADE_PARAMS,
@@ -33,6 +37,11 @@ function haversine(
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/** Templates drawn as a freehand path are handled by PencilDrawHandler. */
+function isPathTemplate(mode: string): boolean {
+  return mode === "pencil" || mode === "corridor";
 }
 
 interface DragState {
@@ -64,6 +73,9 @@ export function TemplateDrawHandler() {
   const templateMode = useMissionStore((s) => s.templateMode);
   const setTemplateMode = useMissionStore((s) => s.setTemplateMode);
   const appendWaypoints = useMissionStore((s) => s.appendWaypoints);
+  const pois = useMissionStore((s) => s.pois);
+  const payloadEnumValue = useMissionStore((s) => s.config.payloadEnumValue);
+  const camera = cameraForPayload(payloadEnumValue).camera;
   const { current: map } = useMap();
 
   const [dragging, setDragging] = useState(false);
@@ -73,6 +85,7 @@ export function TemplateDrawHandler() {
   const [orbitParams, setOrbitParams] = useState<OrbitParams | null>(null);
   const [gridParams, setGridParams] = useState<GridParams | null>(null);
   const [facadeParams, setFacadeParams] = useState<FacadeParams | null>(null);
+  const [towerParams, setTowerParams] = useState<TowerParams | null>(null);
 
   const resetState = useCallback(() => {
     setDragging(false);
@@ -81,6 +94,7 @@ export function TemplateDrawHandler() {
     setOrbitParams(null);
     setGridParams(null);
     setFacadeParams(null);
+    setTowerParams(null);
   }, []);
 
   useEffect(() => {
@@ -89,7 +103,7 @@ export function TemplateDrawHandler() {
 
   // Map mouse events for drag-to-draw
   useEffect(() => {
-    if (!map || !templateMode || templateMode === "pencil") return;
+    if (!map || !templateMode || isPathTemplate(templateMode)) return;
 
     let isDragging = false;
     let currentDrag: DragState | null = null;
@@ -152,6 +166,12 @@ export function TemplateDrawHandler() {
           point1: finalDrag.start,
           point2: finalDrag.end,
         });
+      } else if (tm === "tower") {
+        setTowerParams({
+          ...DEFAULT_TOWER_PARAMS,
+          center: finalDrag.start,
+          radiusM: Math.round(dist),
+        });
       }
 
       setConfirmed(true);
@@ -171,11 +191,12 @@ export function TemplateDrawHandler() {
   }, [map, templateMode, confirmed, resetState]);
 
   const preview: TemplateResult | null = useMemo(() => {
-    if (orbitParams) return generateOrbit(orbitParams);
-    if (gridParams) return generateGrid(gridParams);
-    if (facadeParams) return generateFacade(facadeParams);
+    if (orbitParams) return generateOrbit(orbitParams, pois);
+    if (gridParams) return generateGrid({ ...gridParams, camera });
+    if (facadeParams) return generateFacade(facadeParams, pois);
+    if (towerParams) return generateTower(towerParams, pois);
     return null;
-  }, [orbitParams, gridParams, facadeParams]);
+  }, [orbitParams, gridParams, facadeParams, towerParams, camera, pois]);
 
   const dragPreview = useMemo(() => {
     if (!dragging || !dragState || !templateMode) return null;
@@ -208,13 +229,20 @@ export function TemplateDrawHandler() {
         point2: dragState.end,
       });
     }
+    if (templateMode === "tower") {
+      return generateTower({
+        ...DEFAULT_TOWER_PARAMS,
+        center: dragState.start,
+        radiusM: Math.round(dist),
+      });
+    }
     return null;
   }, [dragging, dragState, templateMode]);
 
   // Build drag guide GeoJSON
   const dragGuideGeojson = useMemo(() => {
     if (!dragging || !dragState) return null;
-    if (templateMode === "orbit") {
+    if (templateMode === "orbit" || templateMode === "tower") {
       const dist = haversine(
         dragState.start[0],
         dragState.start[1],
@@ -257,7 +285,7 @@ export function TemplateDrawHandler() {
     return null;
   }, [dragging, dragState, templateMode]);
 
-  if (!templateMode || templateMode === "pencil") return null;
+  if (!templateMode || isPathTemplate(templateMode)) return null;
 
   const handleApply = () => {
     if (preview) {
@@ -292,22 +320,24 @@ export function TemplateDrawHandler() {
       )}
 
       {/* Center marker for orbit drag */}
-      {dragging && dragState && templateMode === "orbit" && (
-        <Marker
-          longitude={dragState.start[1]}
-          latitude={dragState.start[0]}
-          anchor="center"
-        >
-          <div
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              background: "#a78bfa",
-            }}
-          />
-        </Marker>
-      )}
+      {dragging &&
+        dragState &&
+        (templateMode === "orbit" || templateMode === "tower") && (
+          <Marker
+            longitude={dragState.start[1]}
+            latitude={dragState.start[0]}
+            anchor="center"
+          >
+            <div
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: "#a78bfa",
+              }}
+            />
+          </Marker>
+        )}
 
       {/* Facade endpoint markers during drag */}
       {dragging && dragState && templateMode === "facade" && (
@@ -356,9 +386,13 @@ export function TemplateDrawHandler() {
           onOrbitChange={setOrbitParams}
           onGridChange={setGridParams}
           onFacadeChange={setFacadeParams}
+          towerParams={towerParams}
+          onTowerChange={setTowerParams}
+          pois={pois}
           onApply={handleApply}
           onCancel={handleCancel}
           waypointCount={activePreview?.waypoints.length ?? 0}
+          previewWaypoints={activePreview?.waypoints}
         />
       )}
     </>

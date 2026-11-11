@@ -3,12 +3,15 @@ import { Source, Layer, useMap } from "react-map-gl/mapbox";
 import { useMissionStore } from "@/store/missionStore";
 import { TemplateConfigPanel } from "./TemplateConfigPanel";
 import { TemplatePreview } from "./TemplatePreview";
-import type { PencilParams } from "@/lib/templates";
+import type { CorridorParams, PencilParams } from "@/lib/templates";
 import {
+  generateCorridor,
   generatePencil,
   pathLength,
+  DEFAULT_CORRIDOR_PARAMS,
   DEFAULT_PENCIL_PARAMS,
 } from "@/lib/templates";
+import { cameraForPayload } from "@/lib/camera";
 
 const MIN_PATH_LENGTH_M = 10;
 
@@ -17,11 +20,17 @@ export function PencilDrawHandler() {
   const setTemplateMode = useMissionStore((s) => s.setTemplateMode);
   const appendWaypoints = useMissionStore((s) => s.appendWaypoints);
   const pois = useMissionStore((s) => s.pois);
+  const payloadEnumValue = useMissionStore((s) => s.config.payloadEnumValue);
+  const camera = cameraForPayload(payloadEnumValue).camera;
   const { current: map } = useMap();
+  const isPathMode = templateMode === "pencil" || templateMode === "corridor";
 
   const [rawPath, setRawPath] = useState<[number, number][]>([]);
   const [confirmed, setConfirmed] = useState(false);
   const [pencilParams, setPencilParams] = useState<PencilParams | null>(null);
+  const [corridorParams, setCorridorParams] = useState<CorridorParams | null>(
+    null,
+  );
 
   const drawingRef = useRef(false);
   const pathRef = useRef<[number, number][]>([]);
@@ -34,6 +43,7 @@ export function PencilDrawHandler() {
     setRawPath([]);
     setConfirmed(false);
     setPencilParams(null);
+    setCorridorParams(null);
   }, []);
 
   useEffect(() => {
@@ -42,7 +52,7 @@ export function PencilDrawHandler() {
 
   // Map mouse events for pencil drawing
   useEffect(() => {
-    if (!map || templateMode !== "pencil") return;
+    if (!map || !isPathMode) return;
 
     const onMouseDown = (e: any) => {
       if (confirmed) return;
@@ -81,10 +91,14 @@ export function PencilDrawHandler() {
         return;
       }
 
-      setPencilParams({
-        ...DEFAULT_PENCIL_PARAMS,
-        path: finalPath,
-      });
+      if (useMissionStore.getState().templateMode === "corridor") {
+        setCorridorParams({ ...DEFAULT_CORRIDOR_PARAMS, path: finalPath });
+      } else {
+        setPencilParams({
+          ...DEFAULT_PENCIL_PARAMS,
+          path: finalPath,
+        });
+      }
       setConfirmed(true);
     };
 
@@ -98,12 +112,15 @@ export function PencilDrawHandler() {
       map.off("mouseup", onMouseUp);
       map.getMap().dragPan.enable();
     };
-  }, [map, templateMode, confirmed, resetState]);
+  }, [map, isPathMode, confirmed, resetState]);
 
   const preview = useMemo(() => {
+    if (corridorParams) {
+      return generateCorridor({ ...corridorParams, camera }, pois);
+    }
     if (!pencilParams) return null;
-    return generatePencil(pencilParams);
-  }, [pencilParams]);
+    return generatePencil(pencilParams, pois);
+  }, [pencilParams, corridorParams, camera, pois]);
 
   // GeoJSON for the raw drawn path
   const rawPathGeojson = useMemo(() => {
@@ -118,7 +135,7 @@ export function PencilDrawHandler() {
     };
   }, [rawPath]);
 
-  if (templateMode !== "pencil") return null;
+  if (!isPathMode) return null;
 
   const handleApply = () => {
     if (preview) {
@@ -153,6 +170,18 @@ export function PencilDrawHandler() {
       {confirmed && preview && <TemplatePreview result={preview} />}
 
       {/* Config panel */}
+      {confirmed && corridorParams && (
+        <TemplateConfigPanel
+          type="corridor"
+          corridorParams={corridorParams}
+          onCorridorChange={setCorridorParams}
+          pois={pois}
+          onApply={handleApply}
+          onCancel={handleCancel}
+          waypointCount={preview?.waypoints.length ?? 0}
+          previewWaypoints={preview?.waypoints}
+        />
+      )}
       {confirmed && pencilParams && (
         <TemplateConfigPanel
           type="pencil"
@@ -161,6 +190,7 @@ export function PencilDrawHandler() {
           onApply={handleApply}
           onCancel={handleCancel}
           waypointCount={preview?.waypoints.length ?? 0}
+          previewWaypoints={preview?.waypoints}
           pois={pois}
         />
       )}

@@ -22,6 +22,9 @@ import {
   formatDistance,
   formatHeight,
   speedRange,
+  distanceLabel,
+  toDisplayDistance,
+  fromDisplayDistance,
 } from "@/lib/units";
 import type { HeadingMode, TurnMode } from "@droneroute/shared";
 
@@ -305,6 +308,36 @@ export function WaypointEditorInline({
           </SelectContent>
         </Select>
       </div>
+
+      {wp.index < waypoints.length - 1 && (
+        <div>
+          <Label className="text-xs">
+            Photo interval to next WP ({distanceLabel(unitSystem)})
+          </Label>
+          <Input
+            type="number"
+            placeholder="Off"
+            value={
+              wp.photoIntervalM
+                ? toDisplayDistance(wp.photoIntervalM, unitSystem)
+                : ""
+            }
+            onChange={(e) => {
+              const v = parseFloat(e.target.value);
+              update({
+                photoIntervalM:
+                  Number.isFinite(v) && v > 0
+                    ? fromDisplayDistance(v, unitSystem)
+                    : undefined,
+              });
+            }}
+            min={1}
+            step={1}
+            className="h-8 text-xs"
+            title="Take a photo every N while flying to the next waypoint. Leave empty to turn off."
+          />
+        </div>
+      )}
 
       <Separator />
 

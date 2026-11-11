@@ -241,6 +241,11 @@ export interface Waypoint {
   turnMode?: TurnMode;
   turnDampingDist?: number;
   gimbalPitchAngle: number;
+  /**
+   * Distance-interval capture: take a photo every N meters while flying from
+   * this waypoint to the next one (WPML `multipleDistance` trigger).
+   */
+  photoIntervalM?: number;
   actions: WaypointAction[];
 }
 
