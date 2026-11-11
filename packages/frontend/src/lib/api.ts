@@ -1,10 +1,15 @@
 import type { AdminUser, PaginatedResponse } from "@droneroute/shared";
 import { useMissionStore } from "@/store/missionStore";
 import { useAuthStore } from "@/store/authStore";
+import { useConfigStore } from "@/store/configStore";
 
 const API_BASE = "/api";
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function request<T>(
+  path: string,
+  options?: RequestInit,
+  isRetry = false,
+): Promise<T> {
   const token = localStorage.getItem("droneroute_token");
   const headers: Record<string, string> = {
     ...(options?.headers as Record<string, string>),
@@ -22,6 +27,22 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
     headers,
   });
+
+  // Single-user mode has no sign-in screen, so an expired or unknown session
+  // is renewed silently and the request is tried once more.
+  if (
+    res.status === 401 &&
+    !isRetry &&
+    path !== "/auth/local" &&
+    useConfigStore.getState().singleUser
+  ) {
+    try {
+      await useAuthStore.getState().localLogin();
+      return request<T>(path, options, true);
+    } catch {
+      // Fall through and report the original failure
+    }
+  }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
@@ -65,6 +86,11 @@ export const api = {
   put: <T>(path: string, body?: any) =>
     request<T>(path, {
       method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  patch: <T>(path: string, body?: any) =>
+    request<T>(path, {
+      method: "PATCH",
       body: JSON.stringify(body),
     }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),

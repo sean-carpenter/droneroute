@@ -13,6 +13,9 @@ import { adminRoutes } from "./routes/admin.js";
 import { preferencesRoutes } from "./routes/preferences.js";
 import { globalLimiter } from "./middleware/rateLimit.js";
 import { resolveDefaultMapView } from "./lib/config.js";
+import { isSingleUser } from "./lib/singleUser.js";
+import { proposalRoutes } from "./routes/proposals.js";
+import { createMcpRouter, isMcpEnabled } from "./mcp/server.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -64,6 +67,12 @@ app.use("/api/kmz", kmzRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/preferences", preferencesRoutes);
 app.use("/api/airspace", airspaceRoutes);
+app.use("/api/proposals", proposalRoutes);
+
+// MCP endpoint for AI agents (opt-in)
+if (isMcpEnabled()) {
+  app.use("/mcp", createMcpRouter());
+}
 app.use("/api", sharedRoutes);
 
 // Health check
@@ -76,6 +85,8 @@ app.get("/api/config", (_req, res) => {
   const selfHosted = (process.env.SELF_HOSTED ?? "true") === "true";
   res.json({
     selfHosted,
+    singleUser: isSingleUser(),
+    mcpEnabled: isMcpEnabled(),
     googleClientId: selfHosted ? undefined : process.env.GOOGLE_CLIENT_ID,
     mapboxToken: process.env.MAPBOX_TOKEN || "",
     defaultMapView: resolveDefaultMapView(),
@@ -115,6 +126,6 @@ app.listen(PORT, () => {
   const selfHosted = (process.env.SELF_HOSTED ?? "true") === "true";
   const adminEmail = process.env.ADMIN_EMAIL || "";
   console.log(
-    `Mode: ${selfHosted ? "self-hosted" : "cloud"}${!selfHosted && adminEmail ? ` (admin: ${adminEmail})` : ""}`,
+    `Mode: ${selfHosted ? "self-hosted" : "cloud"}${!selfHosted && adminEmail ? ` (admin: ${adminEmail})` : ""}${isSingleUser() ? " — single user, no sign-in" : ""}`,
   );
 });

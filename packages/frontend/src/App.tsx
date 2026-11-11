@@ -101,14 +101,21 @@ export default function App() {
   } | null>(null);
 
   const { token, email: userEmail, logout, restore, isAdmin } = useAuthStore();
-  const { selfHosted } = useConfigStore();
+  const { selfHosted, singleUser } = useConfigStore();
   const [gravatarUrl, setGravatarUrl] = useState<string | null>(null);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
 
-  // Restore auth session on mount
+  // Restore auth session on mount. A single-user instance has no sign-in:
+  // it opens (or renews) the local workspace session instead.
   useEffect(() => {
     restore();
-  }, []);
+    if (singleUser) {
+      useAuthStore
+        .getState()
+        .localLogin()
+        .catch(() => toast.error("Could not open the local workspace"));
+    }
+  }, [singleUser]);
 
   // Fetch user preferences after auth is restored
   const { fetchPreferences, preferences } = usePreferencesStore();
@@ -240,7 +247,7 @@ export default function App() {
 
   // Compute Gravatar URL when email changes
   useEffect(() => {
-    if (!userEmail) {
+    if (!userEmail || singleUser) {
       setGravatarUrl(null);
       return;
     }
@@ -253,7 +260,7 @@ export default function App() {
           .join("");
         setGravatarUrl(`https://www.gravatar.com/avatar/${hex}?s=64&d=mp`);
       });
-  }, [userEmail]);
+  }, [userEmail, singleUser]);
 
   const toggleSection = (section: SidebarSection) => {
     setExpandedSections((prev) => ({ ...prev, [section]: !prev[section] }));
@@ -289,8 +296,17 @@ export default function App() {
 
   const handleSave = async () => {
     if (!token) {
-      setShowAuthModal(true);
-      return;
+      if (!singleUser) {
+        setShowAuthModal(true);
+        return;
+      }
+      // No sign-in on a single-user instance: open the local session first
+      try {
+        await useAuthStore.getState().localLogin();
+      } catch {
+        toast.error("Could not open the local workspace");
+        return;
+      }
     }
     if (!missionName.trim()) {
       toast.warning("Please enter a mission name before saving");
@@ -847,9 +863,13 @@ export default function App() {
                 )}
                 <span
                   className="text-[11px] text-muted-foreground truncate"
-                  title={userEmail || ""}
+                  title={
+                    singleUser
+                      ? "Missions and settings are saved on this machine. No sign-in needed."
+                      : userEmail || ""
+                  }
                 >
-                  {userEmail}
+                  {singleUser ? "Local workspace" : userEmail}
                 </span>
               </div>
               <div className="flex items-center gap-0.5 shrink-0">
@@ -862,16 +882,25 @@ export default function App() {
                 >
                   <UserCog className="h-3.5 w-3.5" />
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={logout}
-                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                  title="Sign out"
-                >
-                  <LogOut className="h-3.5 w-3.5" />
-                </Button>
+                {!singleUser && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={logout}
+                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                    title="Sign out"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                  </Button>
+                )}
               </div>
+            </div>
+          ) : singleUser ? (
+            <div className="h-7 flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
+              <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center shrink-0">
+                <User className="h-3 w-3 text-muted-foreground" />
+              </div>
+              Opening local workspace…
             </div>
           ) : (
             <Button

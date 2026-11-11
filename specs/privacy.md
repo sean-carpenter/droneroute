@@ -23,5 +23,8 @@ Understand what DroneRoute stores about you and where it lives.
   Mapbox, and airspace lookups go to national providers, only as needed to draw
   the map and zones. The optional wind advisory sends a position rounded to
   about 1 km to Open-Meteo, and only while it is switched on.
+- AI route proposals: DroneRoute never receives the documents you give an
+  agent, only the geometry and notes the agent sends. An address the agent
+  looks up goes to Mapbox.
 - Shared mission links are viewable by anyone who has the link and show the
   owner's email — only share with people you trust.

@@ -66,6 +66,11 @@ analytics, advertising, or behavioural tracking.
   sends the mission area's position (or the map center), rounded to about
   1 km, to Open-Meteo to fetch current wind. Nothing is sent while the
   advisory is off, which is the default.
+- **AI agents** — only if you enable the agent connection and connect one.
+  The agent reads your documents itself; DroneRoute receives only the site
+  geometry and notes it submits. What the agent's provider does with your
+  documents is covered by that provider's terms. Addresses an agent looks up
+  through DroneRoute are sent to Mapbox.
 - **Google** — only in cloud mode, and only if you choose Google sign-in. Your
   Google credential is verified server-side; we store your email and a Google
   account identifier.

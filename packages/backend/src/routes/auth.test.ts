@@ -98,3 +98,56 @@ describe("POST /api/auth/login — failure paths", () => {
     expect(res.body.token).toBeTruthy();
   });
 });
+
+describe("POST /api/auth/local — single-user mode", () => {
+  const withEnv = async (
+    env: Record<string, string | undefined>,
+    run: () => Promise<void>,
+  ) => {
+    const saved = { ...process.env };
+    Object.assign(process.env, env);
+    for (const [k, v] of Object.entries(env)) {
+      if (v === undefined) delete process.env[k];
+    }
+    try {
+      await run();
+    } finally {
+      process.env = saved;
+    }
+  };
+
+  it("is not available unless single-user mode is on", async () => {
+    await withEnv({ SINGLE_USER: undefined }, async () => {
+      const res = await request(app).post("/api/auth/local");
+      expect(res.status).toBe(404);
+    });
+  });
+
+  it("is ignored in cloud mode", async () => {
+    await withEnv({ SINGLE_USER: "true", SELF_HOSTED: "false" }, async () => {
+      const res = await request(app).post("/api/auth/local");
+      expect(res.status).toBe(404);
+    });
+  });
+
+  it("returns a working session for the same local account every time", async () => {
+    await withEnv({ SINGLE_USER: "true" }, async () => {
+      const first = await request(app).post("/api/auth/local");
+      const second = await request(app).post("/api/auth/local");
+      expect(first.status).toBe(200);
+      expect(first.body.token).toBeTruthy();
+      expect(first.body.isAdmin).toBe(false);
+      expect(second.body.userId).toBe(first.body.userId);
+
+      // Several accounts already exist in this test database, so a dedicated
+      // local account is created rather than adopting one of them.
+      expect(first.body.email).toBe("local@droneroute.local");
+
+      // The local account has no usable password
+      const login = await request(app)
+        .post("/api/auth/login")
+        .send({ email: "local@droneroute.local", password: "" });
+      expect(login.status).not.toBe(200);
+    });
+  });
+});

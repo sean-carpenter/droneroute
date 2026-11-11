@@ -60,7 +60,7 @@ export function AccountModal({ onClose }: AccountModalProps) {
   }, [onClose]);
 
   const { email } = useAuthStore();
-  const { selfHosted } = useConfigStore();
+  const { selfHosted, singleUser } = useConfigStore();
   const { preferences, updatePreferences } = usePreferencesStore();
   const enabledProviders = useAirspaceStore((s) => s.enabledProviders);
   const setProviderEnabled = useAirspaceStore((s) => s.setProviderEnabled);
@@ -184,11 +184,17 @@ export function AccountModal({ onClose }: AccountModalProps) {
           >
             <div className="space-y-5 pt-2">
               <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Email</Label>
-                <p className="text-sm">{email}</p>
+                <Label className="text-xs text-muted-foreground">
+                  {singleUser ? "Workspace" : "Email"}
+                </Label>
+                <p className="text-sm">
+                  {singleUser
+                    ? "Local workspace — saved on this machine, no sign-in"
+                    : email}
+                </p>
               </div>
 
-              {selfHosted && (
+              {selfHosted && !singleUser && (
                 <form onSubmit={handleChangePassword} className="space-y-3">
                   <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                     <KeyRound className="h-3 w-3" />

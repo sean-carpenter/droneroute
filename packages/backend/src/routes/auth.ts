@@ -9,6 +9,7 @@ import {
 } from "../services/authService.js";
 import { authMiddleware, type AuthRequest } from "../middleware/auth.js";
 import { authLimiter } from "../middleware/rateLimit.js";
+import { getLocalUserId, isSingleUser } from "../lib/singleUser.js";
 
 export const authRoutes = Router();
 
@@ -120,6 +121,26 @@ authRoutes.post("/google", authLimiter, async (req, res) => {
 
   const token = generateToken(id, isAdmin);
   res.status(201).json({ token, userId: id, email, isAdmin });
+});
+
+// ---------------------------------------------------------------------------
+// Local workspace session (single-user mode only): no credentials needed
+// ---------------------------------------------------------------------------
+authRoutes.post("/local", (_req, res) => {
+  if (!isSingleUser()) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  const userId = getLocalUserId();
+  const user = getDb()
+    .prepare("SELECT email FROM users WHERE id = ?")
+    .get(userId) as { email: string };
+  res.json({
+    token: generateToken(userId, false),
+    userId,
+    email: user.email,
+    isAdmin: false,
+  });
 });
 
 // ---------------------------------------------------------------------------

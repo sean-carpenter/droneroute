@@ -50,6 +50,18 @@ export function PencilDrawHandler() {
     resetState();
   }, [templateMode, resetState]);
 
+  // A corridor seeded from a route proposal opens with its path already set
+  const templateSeed = useMissionStore((s) => s.templateSeed);
+  const consumeTemplateSeed = useMissionStore((s) => s.consumeTemplateSeed);
+  useEffect(() => {
+    if (templateSeed?.type !== "corridor") return;
+    resetState();
+    setRawPath(templateSeed.params.path);
+    setCorridorParams(templateSeed.params);
+    setConfirmed(true);
+    consumeTemplateSeed();
+  }, [templateSeed, consumeTemplateSeed, resetState]);
+
   // Map mouse events for pencil drawing
   useEffect(() => {
     if (!map || !isPathMode) return;

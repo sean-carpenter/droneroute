@@ -101,6 +101,24 @@ export function TemplateDrawHandler() {
     resetState();
   }, [templateMode, resetState]);
 
+  // A seed (from a route proposal) opens the template already filled in,
+  // skipping the drag. Declared after the reset above so it wins when both
+  // run for the same change.
+  const templateSeed = useMissionStore((s) => s.templateSeed);
+  const consumeTemplateSeed = useMissionStore((s) => s.consumeTemplateSeed);
+  useEffect(() => {
+    if (!templateSeed || isPathTemplate(templateSeed.type)) return;
+    resetState();
+    if (templateSeed.type === "grid") setGridParams(templateSeed.params);
+    else if (templateSeed.type === "orbit") setOrbitParams(templateSeed.params);
+    else if (templateSeed.type === "tower") setTowerParams(templateSeed.params);
+    else if (templateSeed.type === "facade") {
+      setFacadeParams(templateSeed.params);
+    }
+    setConfirmed(true);
+    consumeTemplateSeed();
+  }, [templateSeed, consumeTemplateSeed, resetState]);
+
   // Map mouse events for drag-to-draw
   useEffect(() => {
     if (!map || !templateMode || isPathTemplate(templateMode)) return;

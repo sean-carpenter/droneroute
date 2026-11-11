@@ -13,6 +13,8 @@ interface AuthState {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
   googleLogin: (credential: string) => Promise<void>;
+  /** Open the local workspace session (single-user mode, no credentials). */
+  localLogin: () => Promise<void>;
   logout: () => void;
   restore: () => void;
   setNeedsVerification: (value: boolean) => void;
@@ -102,6 +104,24 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({ isLoading: false });
       throw err;
     }
+  },
+
+  localLogin: async () => {
+    const res = await api.post<{
+      token: string;
+      userId: string;
+      email: string;
+    }>("/auth/local");
+    localStorage.setItem("droneroute_token", res.token);
+    localStorage.setItem("droneroute_email", res.email);
+    localStorage.setItem("droneroute_is_admin", "false");
+    set({
+      token: res.token,
+      email: res.email,
+      userId: res.userId,
+      isAdmin: false,
+      needsVerification: false,
+    });
   },
 
   logout: () => {

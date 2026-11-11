@@ -358,6 +358,12 @@ When a waypoint falls inside a restriction zone, a warning banner appears at the
 
 ---
 
+## AI Route Proposals
+
+Give a survey, plat or permit set to an AI agent (Claude, Cursor, Codex) and have it draft a first route. The agent reads the document, locates the site and sends a proposal you review on the map: move it into place, read its notes, and press **Use** to open each suggested mission as a pre-filled template. Setup and details are in [docs/agents.md](docs/agents.md).
+
+---
+
 ## KMZ Export & Import
 
 ### Exporting

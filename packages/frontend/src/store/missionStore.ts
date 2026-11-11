@@ -9,6 +9,7 @@ import type {
 import { DEFAULT_MISSION_CONFIG, DEFAULT_WAYPOINT } from "@droneroute/shared";
 import { usePreferencesStore } from "@/store/preferencesStore";
 import type { TemplateType } from "@/lib/templates";
+import type { TemplateSeed } from "@/lib/proposal";
 
 export type SelectionMode = "replace" | "toggle" | "range";
 
@@ -62,6 +63,10 @@ interface MissionState {
   isAddingWaypoint: boolean;
   isAddingPoi: boolean;
   templateMode: TemplateType | null;
+  /** Settings a template should open with instead of waiting for a drag. */
+  templateSeed: TemplateSeed | null;
+  startTemplateFromSeed: (seed: TemplateSeed) => void;
+  consumeTemplateSeed: () => void;
   currentPage: "editor" | "routes" | "shared" | "admin";
   shareToken: string | null;
   setCurrentPage: (page: "editor" | "routes" | "shared" | "admin") => void;
@@ -193,6 +198,18 @@ export const useMissionStore = create<MissionState>((set, get) => ({
   isAddingWaypoint: true,
   isAddingPoi: false,
   templateMode: null,
+  templateSeed: null,
+  startTemplateFromSeed: (seed) =>
+    set({
+      templateMode: seed.type,
+      templateSeed: seed,
+      isAddingWaypoint: false,
+      isAddingPoi: false,
+      isDrawingObstacle: false,
+      selectedWaypointIndices: new Set(),
+      selectedPoiId: null,
+    }),
+  consumeTemplateSeed: () => set({ templateSeed: null }),
   past: [],
   future: [],
 

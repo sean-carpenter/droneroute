@@ -23,6 +23,6 @@ Save your missions to your account and share them with others via a link.
 
 ## Good to know
 
-- You need an account to save missions. Without one, you can still plan flights but they won't persist.
+- You need an account to save missions. Without one, you can still plan flights but they won't persist. The exception is a self-hosted instance in single-user mode, where everything saves to the local workspace with no sign-in.
 - Shared links are read-only — viewers cannot modify your original mission.
 - Sharing is available in cloud mode. Self-hosted installations may not include this feature.

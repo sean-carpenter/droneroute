@@ -298,6 +298,92 @@ export interface SharedMission {
   obstacles: Obstacle[];
 }
 
+// ── Route proposals (drafted by an AI agent, reviewed by the user) ──────
+
+/** [latitude, longitude] */
+export type LatLng = [number, number];
+
+export interface ProposalStructure {
+  /** Referenced by suggestions' `targetId`. */
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  /** Height above ground in meters, when the documents give it. */
+  heightM?: number;
+  /** Radius of a circle that encloses the footprint, in meters. */
+  footprintRadiusM?: number;
+  note?: string;
+}
+
+export interface ProposalAlignment {
+  id: string;
+  name: string;
+  /** Centerline of a road, utility, wall or other linear feature. */
+  path: LatLng[];
+  /** Width to cover on the ground, in meters. */
+  widthM?: number;
+}
+
+export type ProposalSuggestionKind =
+  | "grid"
+  | "corridor"
+  | "orbit"
+  | "tower"
+  | "facade";
+
+/** One mission the agent recommends, mapped onto an existing template. */
+export interface ProposalSuggestion {
+  kind: ProposalSuggestionKind;
+  /**
+   * What it applies to: `"boundary"` for grids, a structure id for orbit and
+   * tower, an alignment id for corridor and facade.
+   */
+  targetId: string;
+  title: string;
+  /** Why the agent recommends this, in a sentence or two. */
+  rationale: string;
+  altitudeM?: number;
+  sideOverlap?: number; // 0–1
+  forwardOverlap?: number; // 0–1
+  crossHatch?: boolean;
+  /** Distance to keep from a structure or wall, in meters. */
+  standoffM?: number;
+  minAltitudeM?: number;
+  maxAltitudeM?: number;
+}
+
+export interface RouteProposalContent {
+  title: string;
+  /** Which agent drafted it and from which documents. */
+  sourceNote?: string;
+  site: {
+    address?: string;
+    anchor?: { latitude: number; longitude: number };
+    /** How the position on the map was determined, which sets how far to trust it. */
+    anchorSource: "coordinates" | "geocoded" | "estimated";
+  };
+  /** Property or project limits. */
+  boundary?: LatLng[];
+  /** Gap left when the boundary calls were traced, in meters. */
+  boundaryClosureErrorM?: number;
+  structures: ProposalStructure[];
+  alignments: ProposalAlignment[];
+  suggestions: ProposalSuggestion[];
+  /** Things the agent assumed because the documents did not say. */
+  assumptions: string[];
+  /** Things the user should check before flying. */
+  warnings: string[];
+}
+
+export type RouteProposalStatus = "pending" | "accepted" | "dismissed";
+
+export interface RouteProposal extends RouteProposalContent {
+  id: string;
+  status: RouteProposalStatus;
+  createdAt: string;
+}
+
 // ── Admin ────────────────────────────────────────────────
 
 export interface AdminUser {

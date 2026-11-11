@@ -12,6 +12,7 @@ Everything DroneRoute can do, explained in plain language.
 - [Map and visualization](map-and-visualization.md) — the interactive map and flight path display
 - [Saving and sharing](saving-and-sharing.md) — save missions to your account and share them with others
 - [Import and export](import-export.md) — bring in existing missions or export for DJI drones
+- [AI route proposals](ai-route-proposals.md) — have an AI agent draft a first route from a survey or permit set
 - [Upload to controller](upload-to-controller.md) — send missions directly to a connected DJI controller
 - [Accounts](accounts.md) — sign up, log in, and manage your account
 - [Privacy & data](privacy.md) — what DroneRoute stores about you and where it lives

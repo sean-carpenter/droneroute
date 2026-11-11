@@ -27,6 +27,8 @@ import { CameraFrustum } from "./CameraFrustum";
 import { BoxSelectHandler } from "./BoxSelectHandler";
 import { WindPanel } from "./WindPanel";
 import { SimulationLayer } from "./SimulationLayer";
+import { ProposalLayer } from "./ProposalLayer";
+import { ProposalPanel } from "@/components/mission/ProposalPanel";
 import { SimulationPlayer } from "@/components/mission/SimulationPlayer";
 import { useSimulationStore } from "@/store/simulationStore";
 import { Triangle } from "lucide-react";
@@ -612,6 +614,7 @@ export function MapView() {
         <BoxSelectHandler />
         <WindPanel />
         <SimulationLayer is3D={is3D} />
+        <ProposalLayer />
         <AirspaceOverlay />
         {obstacles.map((obstacle) => (
           <ObstaclePolygon key={obstacle.id} obstacle={obstacle} />
@@ -704,6 +707,7 @@ export function MapView() {
 
       <MapToolbar />
       <SimulationPlayer />
+      <ProposalPanel />
     </div>
   );
 }

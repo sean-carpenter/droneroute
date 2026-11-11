@@ -205,6 +205,11 @@ export interface GridParams {
   camera?: CameraModel; // defaults to the Mavic 3E wide camera
   /** Fly a second set of lines at 90° to the first. */
   crossHatch: boolean;
+  /**
+   * Site outline [lat, lng][]. When given, flight lines are clipped to it
+   * instead of filling the rectangle between the two corners.
+   */
+  boundary?: [number, number][];
 }
 
 export interface CorridorParams {
@@ -604,6 +609,117 @@ export function gridSpacing(
   };
 }
 
+/** Bounding-box corners of an outline, for `GridParams.corner1/corner2`. */
+export function boundaryCorners(boundary: [number, number][]): {
+  corner1: [number, number];
+  corner2: [number, number];
+} {
+  const lats = boundary.map((p) => p[0]);
+  const lngs = boundary.map((p) => p[1]);
+  return {
+    corner1: [Math.min(...lats), Math.min(...lngs)],
+    corner2: [Math.max(...lats), Math.max(...lngs)],
+  };
+}
+
+/**
+ * Parallel flight lines across a polygon, clipped to its outline. Lines run
+ * at `directionDeg` (0 = east-west, counter-clockwise positive) and are
+ * returned in lawn-mower order. A concave outline can cut one line into
+ * several passes.
+ */
+function clippedSurveyLines(
+  boundary: [number, number][],
+  lineSpacingM: number,
+  directionDeg: number,
+): [number, number][][] {
+  const origin = boundary[0];
+  const theta = directionDeg * DEG;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+
+  // Rotate the outline so the flight lines become horizontal
+  const poly = toLocal(boundary, origin).map(([x, y]): [number, number] => [
+    x * cos + y * sin,
+    -x * sin + y * cos,
+  ]);
+  const ys = poly.map((p) => p[1]);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const height = maxY - minY;
+  if (!(height > 0)) return [];
+
+  // Evenly spaced lines, half a spacing in from each edge, never wider apart
+  // than requested
+  const count = Math.min(
+    500,
+    Math.max(1, Math.ceil(height / Math.max(lineSpacingM, 1) - 1e-9)),
+  );
+  const step = height / count;
+
+  const passes: [number, number][][] = [];
+  for (let i = 0; i < count; i++) {
+    const y = minY + (i + 0.5) * step;
+    const xs: number[] = [];
+    for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
+      const [ax, ay] = poly[a];
+      const [bx, by] = poly[b];
+      if (ay > y !== by > y) {
+        xs.push(ax + ((y - ay) / (by - ay)) * (bx - ax));
+      }
+    }
+    xs.sort((p, q) => p - q);
+
+    const segments: [number, number][][] = [];
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      if (xs[k + 1] - xs[k] < 1) continue; // slivers shorter than a meter
+      segments.push([
+        [xs[k], y],
+        [xs[k + 1], y],
+      ]);
+    }
+    // Alternate direction line by line
+    const ordered =
+      i % 2 === 1
+        ? segments.reverse().map((s): [number, number][] => [s[1], s[0]])
+        : segments;
+
+    for (const segment of ordered) {
+      // Rotate back and return to lat/lng
+      passes.push(
+        fromLocal(
+          segment.map(([x, sy]): [number, number] => [
+            x * cos - sy * sin,
+            x * sin + sy * cos,
+          ]),
+          origin,
+        ),
+      );
+    }
+  }
+  return passes;
+}
+
+/** Grid passes for an outline: along its longer side, plus rotation. */
+function boundaryGridPasses(
+  boundary: [number, number][],
+  lineSpacingM: number,
+  rotationDeg: number,
+  crossHatch: boolean,
+): [number, number][][] {
+  const local = toLocal(boundary, boundary[0]);
+  const xs = local.map((p) => p[0]);
+  const ys = local.map((p) => p[1]);
+  const wide =
+    Math.max(...xs) - Math.min(...xs) >= Math.max(...ys) - Math.min(...ys);
+  // Same sense as the rectangle grid: positive rotation turns it clockwise
+  const direction = (wide ? 0 : 90) - rotationDeg;
+  const passes = clippedSurveyLines(boundary, lineSpacingM, direction);
+  return crossHatch
+    ? [...passes, ...clippedSurveyLines(boundary, lineSpacingM, direction + 90)]
+    : passes;
+}
+
 export function generateGrid(params: GridParams): TemplateResult {
   const { corner1, corner2, altitude, addPhotos, rotationDeg, reverse } =
     params;
@@ -685,9 +801,19 @@ export function generateGrid(params: GridParams): TemplateResult {
     return passes;
   };
 
-  let passes = linesAlong(primaryEW);
-  if (params.crossHatch) {
-    passes = [...passes, ...linesAlong(!primaryEW)];
+  let passes: [number, number][][];
+  if (params.boundary && params.boundary.length >= 3) {
+    passes = boundaryGridPasses(
+      params.boundary,
+      lineSpacingM,
+      rotationDeg,
+      params.crossHatch,
+    );
+  } else {
+    passes = linesAlong(primaryEW);
+    if (params.crossHatch) {
+      passes = [...passes, ...linesAlong(!primaryEW)];
+    }
   }
 
   if (reverse) {
@@ -711,7 +837,7 @@ const EARTH_R = 6371000;
 const DEG = Math.PI / 180;
 
 /** Project [lat, lng] points to local east/north meters around an origin. */
-function toLocal(
+export function toLocal(
   points: [number, number][],
   origin: [number, number],
 ): [number, number][] {
@@ -722,7 +848,7 @@ function toLocal(
   ]);
 }
 
-function fromLocal(
+export function fromLocal(
   points: [number, number][],
   origin: [number, number],
 ): [number, number][] {
