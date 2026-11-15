@@ -13,7 +13,7 @@ import {
   DEFAULT_FACADE_PARAMS,
   DEFAULT_GRID_PARAMS,
   DEFAULT_ORBIT_PARAMS,
-  DEFAULT_POLYGON_FACADE,
+  polygonFacadeAround,
   DEFAULT_TOWER_PARAMS,
   boundaryCorners,
   fromLocal,
@@ -194,28 +194,18 @@ export function suggestionToSeed(
         );
         const footprint = structure?.footprintVertices;
         if (!footprint || footprint.length < 3) return null;
-        const minAltitude =
-          suggestion.minAltitudeM ?? DEFAULT_POLYGON_FACADE.minAltitude;
+        const around = polygonFacadeAround(footprint, structure.heightM);
+        const minAltitude = suggestion.minAltitudeM ?? around.minAltitude;
         return {
           type: "facade",
           params: {
-            ...DEFAULT_POLYGON_FACADE,
-            vertices: footprint,
-            standoffM: suggestion.standoffM ?? DEFAULT_POLYGON_FACADE.standoffM,
+            ...around,
+            standoffM: suggestion.standoffM ?? around.standoffM,
             minAltitude,
             maxAltitude: Math.max(
               minAltitude + 5,
-              suggestion.maxAltitudeM ??
-                (structure.heightM
-                  ? structure.heightM + 5
-                  : DEFAULT_POLYGON_FACADE.maxAltitude),
+              suggestion.maxAltitudeM ?? around.maxAltitude,
             ),
-            aim: {
-              mode: "structureHeight",
-              height: structure.heightM
-                ? Math.round((structure.heightM / 2) * 10) / 10
-                : 0,
-            },
           },
         };
       }

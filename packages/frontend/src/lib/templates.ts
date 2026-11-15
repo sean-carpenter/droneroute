@@ -279,7 +279,7 @@ export interface RadialFacadeParams {
   camera?: CameraModel;
 }
 
-interface PolygonFacadeParams {
+export interface PolygonFacadeParams {
   boundary: "polygon";
   /** Structure footprint, [lat, lng], at least 3 corners. */
   vertices: [number, number][];
@@ -418,6 +418,36 @@ export const DEFAULT_POLYGON_FACADE: Omit<PolygonFacadeParams, "vertices"> = {
   spacing: DEFAULT_FACADE_SPACING,
   aim: { mode: "structureHeight", height: 0 },
 };
+
+/**
+ * Facade settings for going all the way around a structure's footprint.
+ * With a known height the band runs from near the ground to just above the
+ * top, and the camera aims at the structure's middle.
+ */
+export function polygonFacadeAround(
+  vertices: [number, number][],
+  heightM?: number | null,
+): PolygonFacadeParams {
+  const minAltitude = heightM
+    ? Math.min(
+        DEFAULT_POLYGON_FACADE.minAltitude,
+        Math.max(2, Math.round(heightM * 0.25)),
+      )
+    : DEFAULT_POLYGON_FACADE.minAltitude;
+  return {
+    ...DEFAULT_POLYGON_FACADE,
+    vertices,
+    minAltitude,
+    maxAltitude: Math.max(
+      minAltitude + 5,
+      heightM ? heightM + 5 : DEFAULT_POLYGON_FACADE.maxAltitude,
+    ),
+    aim: {
+      mode: "structureHeight",
+      height: heightM ? Math.round((heightM / 2) * 10) / 10 : 0,
+    },
+  };
+}
 
 export const DEFAULT_PENCIL_PARAMS: Omit<PencilParams, "path"> = {
   numPoints: 10,

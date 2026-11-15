@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Building2, Pencil, Settings, X } from "lucide-react";
+import { Building2, Pencil, ScanLine, Settings, X } from "lucide-react";
 import { SITE_FEATURE_KINDS, type SiteFeatureKind } from "@droneroute/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { useMissionStore } from "@/store/missionStore";
 import { usePreferencesStore } from "@/store/preferencesStore";
 import { polygonArea, formatArea } from "@/lib/geo";
+import { polygonFacadeAround } from "@/lib/templates";
 
 const KINDS = Object.entries(SITE_FEATURE_KINDS) as [
   SiteFeatureKind,
@@ -26,6 +27,8 @@ export function SiteFeatureList() {
     removeSiteFeature,
     startDrawingSiteFeature,
     drawingSiteFeatureKind,
+    templateMode,
+    startTemplateFromSeed,
   } = useMissionStore();
   const unitSystem = usePreferencesStore((s) => s.preferences.unitSystem);
   const [drawKind, setDrawKind] = useState<SiteFeatureKind>("addition");
@@ -215,6 +218,31 @@ export function SiteFeatureList() {
                     placeholder="Anything worth knowing about it"
                   />
                 </div>
+                {feature.kind !== "lot" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 w-full gap-1.5 text-xs"
+                    disabled={templateMode !== null}
+                    title={
+                      templateMode !== null
+                        ? "Apply or cancel the open template first"
+                        : "Open a facade template that goes all the way around this outline at a standoff distance"
+                    }
+                    onClick={() =>
+                      startTemplateFromSeed({
+                        type: "facade",
+                        params: polygonFacadeAround(
+                          feature.vertices,
+                          feature.heightM,
+                        ),
+                      })
+                    }
+                  >
+                    <ScanLine className="h-3 w-3" />
+                    Plan facade inspection
+                  </Button>
+                )}
                 <div className="text-[10px] text-muted-foreground">
                   {feature.vertices.length} corners · drag the name on the map
                   to move it, drag a corner to reshape, right-click a corner to

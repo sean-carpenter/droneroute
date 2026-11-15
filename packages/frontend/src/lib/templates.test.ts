@@ -25,6 +25,7 @@ import {
   generatePencil,
   generateTower,
   offsetPolygon,
+  polygonFacadeAround,
   type FacadeParams,
   type RadialFacadeParams,
   type TemplateAim,
@@ -666,5 +667,36 @@ describe("boundary facades", () => {
     );
     expect(result.plannedCount).toBeGreaterThan(MAX_SURVEY_WAYPOINTS);
     expect(result.waypoints).toHaveLength(MAX_SURVEY_WAYPOINTS);
+  });
+});
+
+describe("polygonFacadeAround", () => {
+  const square: [number, number][] = [
+    [LAT, LNG],
+    [LAT + 0.0001, LNG],
+    [LAT + 0.0001, LNG + 0.0001],
+    [LAT, LNG + 0.0001],
+  ];
+
+  it("spans the structure from near the ground to just above the top", () => {
+    const params = polygonFacadeAround(square, 8);
+    expect(params.boundary).toBe("polygon");
+    expect(params.vertices).toEqual(square);
+    expect(params.minAltitude).toBe(2);
+    expect(params.maxAltitude).toBe(13); // height + 5
+    expect(params.aim).toEqual({ mode: "structureHeight", height: 4 });
+  });
+
+  it("falls back to the defaults without a height", () => {
+    const params = polygonFacadeAround(square, null);
+    expect(params.minAltitude).toBe(DEFAULT_POLYGON_FACADE.minAltitude);
+    expect(params.maxAltitude).toBe(DEFAULT_POLYGON_FACADE.maxAltitude);
+    expect(params.aim.mode).toBe("structureHeight");
+  });
+
+  it("keeps a usable band for a tall structure", () => {
+    const params = polygonFacadeAround(square, 60);
+    expect(params.minAltitude).toBe(10); // capped at the default
+    expect(params.maxAltitude).toBe(65);
   });
 });
