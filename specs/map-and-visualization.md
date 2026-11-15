@@ -24,6 +24,7 @@ When you switch to 3D:
 
 - **Terrain** — real-world elevation data from Mapbox DEM renders mountains and valleys.
 - **Extruded buildings** — 3D buildings appear at zoom level 14+, with height and footprint from OpenStreetMap data.
+- **Extruded site features and obstacles** — a building drawn as a [site feature](site-features.md) rises to its height in its own color, and an obstacle with a height rises in red, so the route can be judged against them by eye. A lot, and any shape without a height, stays flat.
 - **Elevated flight path** — the flight path line floats at each waypoint's configured altitude, interpolating between segments.
 - **Elevated markers** — waypoint and POI markers are positioned at their configured height above ground.
 - **Drop lines** — subtle vertical lines connect each waypoint marker down to the ground.

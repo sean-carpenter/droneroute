@@ -5,7 +5,21 @@ import { useMemo, useState } from "react";
 
 /** Layer id of a feature's fill, used to select it by clicking the map. */
 export const siteFeatureFillId = (id: string) => `site-feature-${id}-fill`;
+/** Layer id of a feature's 3D extrusion, also clickable to select it. */
+export const siteFeatureExtrusionId = (id: string) =>
+  `site-feature-${id}-extrusion`;
 export const SITE_FEATURE_FILL_PREFIX = "site-feature-";
+
+/** Feature id from a clickable site-feature layer id, or null. */
+export function siteFeatureIdFromLayerId(layerId: string): string | null {
+  if (!layerId.startsWith(SITE_FEATURE_FILL_PREFIX)) return null;
+  for (const suffix of ["-fill", "-extrusion"]) {
+    if (layerId.endsWith(suffix)) {
+      return layerId.slice(SITE_FEATURE_FILL_PREFIX.length, -suffix.length);
+    }
+  }
+  return null;
+}
 
 /** Average of the corners: close enough to the middle for a label and handle. */
 function middle(vertices: [number, number][]): [number, number] {
@@ -20,7 +34,13 @@ function middle(vertices: [number, number][]): [number, number] {
  * corner, right-click a corner to remove it, drag the middle handle to move
  * the whole shape.
  */
-export function SiteFeaturePolygon({ feature }: { feature: SiteFeature }) {
+export function SiteFeaturePolygon({
+  feature,
+  is3D,
+}: {
+  feature: SiteFeature;
+  is3D: boolean;
+}) {
   const selectedId = useMissionStore((s) => s.selectedSiteFeatureId);
   const setVertices = useMissionStore((s) => s.setSiteFeatureVertices);
   const isSelected = selectedId === feature.id;
@@ -94,6 +114,19 @@ export function SiteFeaturePolygon({ feature }: { feature: SiteFeature }) {
             ...(isLot ? { "line-dasharray": [3, 2] } : {}),
           }}
         />
+        {/* In 3D a building rises to its height, like the map's own buildings */}
+        {is3D && !isLot && (feature.heightM ?? 0) > 0 && (
+          <Layer
+            id={siteFeatureExtrusionId(feature.id)}
+            type="fill-extrusion"
+            paint={{
+              "fill-extrusion-color": feature.color,
+              "fill-extrusion-height": feature.heightM!,
+              "fill-extrusion-base": 0,
+              "fill-extrusion-opacity": isSelected ? 0.75 : 0.55,
+            }}
+          />
+        )}
       </Source>
 
       {/* Name label, which doubles as the move handle when selected */}

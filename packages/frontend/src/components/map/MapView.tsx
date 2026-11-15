@@ -27,7 +27,8 @@ import { ObstaclePolygon } from "./ObstaclePolygon";
 import {
   SiteFeaturePolygon,
   siteFeatureFillId,
-  SITE_FEATURE_FILL_PREFIX,
+  siteFeatureExtrusionId,
+  siteFeatureIdFromLayerId,
 } from "./SiteFeaturePolygon";
 import { AirspaceOverlay } from "./AirspaceOverlay";
 import { CameraFrustum } from "./CameraFrustum";
@@ -541,13 +542,11 @@ export function MapView() {
       }
 
       // A site feature was clicked: select it
-      const hit = e.features?.find((f) =>
-        f.layer?.id?.startsWith(SITE_FEATURE_FILL_PREFIX),
-      );
-      if (hit?.layer?.id) {
-        selectSiteFeature(
-          hit.layer.id.slice(SITE_FEATURE_FILL_PREFIX.length, -"-fill".length),
-        );
+      const hitId = e.features
+        ?.map((f) => siteFeatureIdFromLayerId(f.layer?.id ?? ""))
+        .find((id) => id !== null);
+      if (hitId) {
+        selectSiteFeature(hitId);
         setBuildingPopup(null);
         return;
       }
@@ -624,7 +623,11 @@ export function MapView() {
         mapStyle={mapStyle}
         cursor={cursor}
         onClick={handleClick}
-        interactiveLayerIds={siteFeatures.map((f) => siteFeatureFillId(f.id))}
+        interactiveLayerIds={siteFeatures.flatMap((f) =>
+          is3D && (f.heightM ?? 0) > 0 && f.kind !== "lot"
+            ? [siteFeatureFillId(f.id), siteFeatureExtrusionId(f.id)]
+            : [siteFeatureFillId(f.id)],
+        )}
         doubleClickZoom={false}
         boxZoom={false}
         id="main-map"
@@ -652,10 +655,10 @@ export function MapView() {
         <ProposalLayer />
         <AirspaceOverlay />
         {siteFeatures.map((feature) => (
-          <SiteFeaturePolygon key={feature.id} feature={feature} />
+          <SiteFeaturePolygon key={feature.id} feature={feature} is3D={is3D} />
         ))}
         {obstacles.map((obstacle) => (
-          <ObstaclePolygon key={obstacle.id} obstacle={obstacle} />
+          <ObstaclePolygon key={obstacle.id} obstacle={obstacle} is3D={is3D} />
         ))}
         <HomeMarker />
         <TakeoffMarker />

@@ -5,9 +5,10 @@ import { useMemo } from "react";
 
 interface ObstaclePolygonProps {
   obstacle: Obstacle;
+  is3D: boolean;
 }
 
-export function ObstaclePolygon({ obstacle }: ObstaclePolygonProps) {
+export function ObstaclePolygon({ obstacle, is3D }: ObstaclePolygonProps) {
   const selectedObstacleId = useMissionStore((s) => s.selectedObstacleId);
   const moveObstacleVertex = useMissionStore((s) => s.moveObstacleVertex);
   const addObstacleVertex = useMissionStore((s) => s.addObstacleVertex);
@@ -67,6 +68,19 @@ export function ObstaclePolygon({ obstacle }: ObstaclePolygonProps) {
             "line-opacity": isSelected ? 1 : 0.7,
           }}
         />
+        {/* In 3D an obstacle with a known height rises to it */}
+        {is3D && (obstacle.height ?? 0) > 0 && (
+          <Layer
+            id={`${sourceId}-extrusion`}
+            type="fill-extrusion"
+            paint={{
+              "fill-extrusion-color": "#ef4444",
+              "fill-extrusion-height": obstacle.height!,
+              "fill-extrusion-base": 0,
+              "fill-extrusion-opacity": isSelected ? 0.5 : 0.35,
+            }}
+          />
+        )}
       </Source>
 
       {/* Vertex handles (draggable markers when selected) */}

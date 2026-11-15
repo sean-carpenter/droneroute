@@ -25,5 +25,6 @@ Draw no-fly zones on the map to get warnings when your flight path conflicts wit
 - A leg is judged by its lower end, so a climb or descent that starts or ends below the obstacle's height plus 5 m is still a warning.
 - Heights are compared only when the mission's altitude mode is relative to the ground or the takeoff point. With absolute (EGM96) altitudes the numbers are not comparable, so every obstacle is treated as having no height.
 - Obstacles created from a 3D building take the building's height when the map data has one.
+- In 3D view an obstacle with a height rises to it as a translucent red block; one without a height stays flat.
 - The takeoff climb and the return to home are not checked against obstacles.
 - Buildings drawn as [site features](site-features.md) are checked like obstacles unless you turn that off for them.
