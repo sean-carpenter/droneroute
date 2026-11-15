@@ -10,14 +10,23 @@ import {
 } from "./templates";
 import {
   DEFAULT_FACADE_PARAMS,
+  DEFAULT_FACADE_SPACING,
   DEFAULT_ORBIT_PARAMS,
   DEFAULT_PENCIL_PARAMS,
+  DEFAULT_POLYGON_FACADE,
+  DEFAULT_RADIAL_FACADE,
   DEFAULT_TOWER_PARAMS,
+  MAX_SURVEY_WAYPOINTS,
+  bearing,
+  facadePhotoSpacing,
+  generateBoundaryFacade,
   generateFacade,
   generateOrbit,
   generatePencil,
   generateTower,
+  offsetPolygon,
   type FacadeParams,
+  type RadialFacadeParams,
   type TemplateAim,
 } from "./templates";
 import { footprintM } from "./camera";
@@ -456,5 +465,206 @@ describe("survey aim and cross-hatch", () => {
     expect(single[0].latitude).toBeCloseTo(single[1].latitude, 9);
     const extra = crossed.slice(single.length);
     expect(extra[0].longitude).toBeCloseTo(extra[1].longitude, 9);
+  });
+});
+
+describe("boundary facades", () => {
+  const center = { latitude: LAT, longitude: LNG };
+  const meters = (east: number, north: number): [number, number] => [
+    LAT + north / 111320,
+    LNG + east / (111320 * Math.cos((LAT * Math.PI) / 180)),
+  ];
+
+  const radial = (
+    overrides: Partial<RadialFacadeParams> = {},
+  ): RadialFacadeParams => ({
+    ...DEFAULT_RADIAL_FACADE,
+    boundary: "circle",
+    center: [LAT, LNG],
+    handle: meters(15, 0),
+    radiusBottomM: 10,
+    radiusTopM: 10,
+    spacing: {
+      ...DEFAULT_FACADE_SPACING,
+      mode: "distance",
+      horizontalM: 8,
+      verticalM: 10,
+    },
+    minAltitude: 10,
+    maxAltitude: 10,
+    ...overrides,
+  });
+
+  it("spaces photos from the camera footprint at the target distance", () => {
+    const gaps = facadePhotoSpacing(20, {
+      ...DEFAULT_FACADE_SPACING,
+      mode: "overlap",
+      horizontalOverlap: 0.75,
+      verticalOverlap: 0.6,
+    });
+    // Mavic 3E wide: 17.3 x 13.0 mm sensor, 12.3 mm focal length
+    expect(gaps.horizontalM).toBeCloseTo(((20 * 17.3) / 12.3) * 0.25, 5);
+    expect(gaps.verticalM).toBeCloseTo(((20 * 13.0) / 12.3) * 0.4, 5);
+  });
+
+  it("uses the typed gaps in distance mode", () => {
+    const gaps = facadePhotoSpacing(20, {
+      ...DEFAULT_FACADE_SPACING,
+      mode: "distance",
+      horizontalM: 8,
+      verticalM: 6,
+    });
+    expect(gaps).toEqual({ horizontalM: 8, verticalM: 6 });
+  });
+
+  it("flies a circle at structure radius plus the target distance", () => {
+    const params = radial();
+    const flightRadius = params.radiusBottomM + params.standoffM;
+    const count = Math.max(
+      4,
+      Math.round((2 * Math.PI * flightRadius) / params.spacing.horizontalM),
+    );
+    const { waypoints, pois, passes, passLabel } =
+      generateBoundaryFacade(params);
+
+    expect(waypoints).toHaveLength(count);
+    expect(passes).toBe(1);
+    expect(passLabel).toBe("orbits");
+    expect(pois).toHaveLength(1);
+    for (const wp of waypoints) {
+      expect(dist(wp, center)).toBeCloseTo(flightRadius, 0);
+      expect(wp.actions[0]?.actionType).toBe("takePhoto");
+      const towardCenter = bearing(wp.latitude, wp.longitude, LAT, LNG);
+      const wrapped = towardCenter > 180 ? towardCenter - 360 : towardCenter;
+      expect(wp.headingAngle).toBeCloseTo(wrapped, 0);
+    }
+    expect(waypoints[0].latitude).toBeGreaterThan(LAT);
+    // Due south is 180 or -180, depending on which side of the meridian the
+    // first sample lands.
+    expect(Math.abs(waypoints[0].headingAngle ?? 0)).toBeCloseTo(180, 0);
+    expect(waypoints[1].longitude).toBeGreaterThan(LNG);
+  });
+
+  it("tapers horizontal orbits and spirals, and ignores taper on columns", () => {
+    const tapered = radial({
+      tapered: true,
+      radiusTopM: 30,
+      standoffM: 5,
+      minAltitude: 10,
+      maxAltitude: 30,
+      spacing: {
+        ...DEFAULT_FACADE_SPACING,
+        mode: "distance",
+        horizontalM: 20,
+        verticalM: 20,
+      },
+    });
+    const orbits = generateBoundaryFacade(tapered).waypoints;
+    const low = orbits.filter((wp) => wp.height === 10);
+    const high = orbits.filter((wp) => wp.height === 30);
+    expect(low.length).toBeGreaterThan(0);
+    expect(high.length).toBeGreaterThan(0);
+    expect(dist(low[0], center)).toBeCloseTo(15, 0);
+    expect(dist(high[0], center)).toBeCloseTo(35, 0);
+
+    const columns = generateBoundaryFacade({
+      ...tapered,
+      pattern: "vertical",
+    }).waypoints;
+    expect(columns.length).toBeGreaterThan(0);
+    for (const wp of columns) {
+      expect(dist(wp, center)).toBeCloseTo(15, 0);
+    }
+
+    const spiral = generateBoundaryFacade({
+      ...tapered,
+      boundary: "spiral",
+      maxAltitude: 40,
+      spacing: {
+        ...DEFAULT_FACADE_SPACING,
+        mode: "distance",
+        horizontalM: 8,
+        verticalM: 10,
+      },
+    }).waypoints;
+    expect(spiral[0].height).toBe(10);
+    expect(spiral.at(-1)!.height).toBe(40);
+    expect(dist(spiral[0], center)).toBeCloseTo(15, 0);
+    expect(dist(spiral.at(-1)!, center)).toBeCloseTo(35, 0);
+    for (let i = 1; i < spiral.length; i++) {
+      expect(spiral[i].height).toBeGreaterThanOrEqual(spiral[i - 1].height);
+    }
+    expect(spiral.at(-1)!.height).toBeGreaterThan(spiral[0].height);
+  });
+
+  it("keeps an offset square outside the footprint by the target distance", () => {
+    const half = 15;
+    const square = [
+      meters(-half, -half),
+      meters(half, -half),
+      meters(half, half),
+      meters(-half, half),
+    ];
+    const standoff = 5;
+    const offset = offsetPolygon(square, standoff);
+    expect(offset.selfCrossing).toBe(false);
+    const south = Math.min(...offset.ring.map((point) => point[0]));
+    const originalSouth = Math.min(...square.map((point) => point[0]));
+    expect((originalSouth - south) * 111320).toBeCloseTo(standoff, 0);
+
+    const { waypoints, selfCrossing } = generateBoundaryFacade({
+      ...DEFAULT_POLYGON_FACADE,
+      vertices: square,
+      standoffM: standoff,
+      minAltitude: 20,
+      maxAltitude: 20,
+      spacing: {
+        ...DEFAULT_FACADE_SPACING,
+        mode: "distance",
+        horizontalM: 3,
+        verticalM: 10,
+      },
+    });
+    expect(selfCrossing).toBe(false);
+    const southSide = waypoints
+      .filter((wp) => wp.latitude < LAT)
+      .sort(
+        (a, b) => Math.abs(a.longitude - LNG) - Math.abs(b.longitude - LNG),
+      )[0];
+    expect(southSide.headingAngle).toBeCloseTo(0, 0);
+    expect((LAT - southSide.latitude) * 111320).toBeCloseTo(half + standoff, 0);
+  });
+
+  it("warns when a tight notch makes the offset cross itself", () => {
+    const notch = [
+      meters(0, 0),
+      meters(10, 0),
+      meters(10, 10),
+      meters(8, 10),
+      meters(8, 4),
+      meters(2, 4),
+      meters(2, 10),
+      meters(0, 10),
+    ];
+    expect(offsetPolygon(notch, 5).selfCrossing).toBe(true);
+  });
+
+  it("drops photos past the survey waypoint cap", () => {
+    const result = generateBoundaryFacade(
+      radial({
+        radiusBottomM: 20,
+        standoffM: 10,
+        minAltitude: 0,
+        maxAltitude: 40,
+        spacing: {
+          ...DEFAULT_FACADE_SPACING,
+          mode: "distance",
+          horizontalM: 1,
+          verticalM: 1,
+        },
+      }),
+    );
+    expect(result.plannedCount).toBeGreaterThan(MAX_SURVEY_WAYPOINTS);
+    expect(result.waypoints).toHaveLength(MAX_SURVEY_WAYPOINTS);
   });
 });

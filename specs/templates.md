@@ -7,7 +7,12 @@ Create common flight patterns automatically instead of placing waypoints one by 
 - **Orbit**: fly a circular path around a center point. Choose radius, number of waypoints, and direction (clockwise or counter-clockwise).
 - **Grid survey**: fly a back-and-forth zigzag pattern over an area. In **photogrammetry** mode you set side and forward overlap (or pick a preset) and the app works out line spacing and photo interval from the camera; it shows ground sample distance (GSD), image footprint, photo count, distance, flight time and batteries needed as you adjust. You can also type a target GSD and the altitude follows. **Fixed spacing** mode keeps the simple "lines every N meters" behavior.
 - **Corridor survey**: draw a path along a road, river or power line and the app flies one or more parallel lines along it, wide enough to cover the corridor width you set.
-- **Facade scan**: fly a vertical scanning pattern along a building face. Useful for inspections.
+- **Facade scan**: fly a vertical scanning pattern along a building face. Useful for inspections. Choose the outline before you draw:
+  - **Wall**: drag along one face, as before.
+  - **Circle**: drag from the center out to the wall. Fly level orbits or vertical columns, a set target distance outside the wall. Add a second radius to taper the orbits. Columns stay on the bottom radius.
+  - **Spiral**: the same circle, climbed as one spiral. It can taper too.
+  - **Polygon**: click the corners of a building and double-click to close. The drone flies outside that outline, in orbits or columns.
+  - Spacing is either overlap (from the camera footprint at the target distance) or an explicit horizontal and vertical distance. Each photo is its own waypoint. Turn on the airspace overlay (A) before flying one.
 - **Pencil path**: draw a freehand path on the map and the app places evenly spaced waypoints along it.
 
 - **Tower inspection**: circle a mast, chimney or tower while climbing — either one continuous spiral (helix) or a stack of level orbits — between a minimum and maximum altitude.
@@ -35,9 +40,10 @@ Grid (photogrammetry mode) and corridor surveys offer three ways to take photos:
 ## How it works
 
 1. Select a template from the toolbar or press its shortcut key (O for orbit, G for grid, F for facade, Z for pencil, C for corridor, T for tower).
-2. Configure the template options in the panel that appears.
-3. Click on the map to place the template.
-4. The generated waypoints appear in the sidebar and can be edited individually.
+2. For a facade, pick Wall, Circle, Spiral, or Polygon in the panel first. The other templates go straight to drawing.
+3. Configure the template options in the panel that appears.
+4. Click or drag on the map to place the template. A polygon facade closes when you double-click or click the first corner.
+5. The generated waypoints appear in the sidebar and can be edited individually.
 
 ## Good to know
 

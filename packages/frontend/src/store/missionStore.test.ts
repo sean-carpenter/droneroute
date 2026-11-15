@@ -159,3 +159,103 @@ describe("selection helpers", () => {
     expect(store().waypoints[5].name).toBe("Waypoint 6");
   });
 });
+
+describe("site features", () => {
+  const square: [number, number][] = [
+    [42.559, -71.078],
+    [42.559, -71.0778],
+    [42.5592, -71.0778],
+    [42.5592, -71.078],
+  ];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    store().clearMission();
+    store().clearHistory();
+    tick();
+  });
+
+  it("adds a feature with its kind's name, color and obstacle setting", () => {
+    store().addSiteFeature(square, "garage");
+    tick();
+    store().addSiteFeature(square, "garage");
+    tick();
+    store().addSiteFeature(square, "lot", { heightM: 3, source: "map" });
+    const [first, second, lot] = store().siteFeatures;
+    expect([first.name, second.name, lot.name]).toEqual([
+      "Garage",
+      "Garage 2",
+      "Lot",
+    ]);
+    expect(first.color).toBe("#f59e0b");
+    expect(first.isObstacle).toBe(true);
+    expect(lot.isObstacle).toBe(false);
+    expect(lot.heightM).toBe(3);
+    expect(lot.source).toBe("map");
+    expect(store().selectedSiteFeatureId).toBe(lot.id);
+  });
+
+  it("finishes the drawing tool as a site feature when one is being drawn", () => {
+    store().startDrawingSiteFeature("addition");
+    expect(store().isDrawingObstacle).toBe(true);
+    expect(store().drawingSiteFeatureKind).toBe("addition");
+    store().setIsDrawingObstacle(false);
+    expect(store().drawingSiteFeatureKind).toBeNull();
+    store().startDrawingSiteFeature("addition");
+    store().addSiteFeature(square, "addition");
+    expect(store().isDrawingObstacle).toBe(false);
+    expect(store().drawingSiteFeatureKind).toBeNull();
+    expect(store().obstacles).toHaveLength(0);
+  });
+
+  it("undoes adding, moving and editing a feature", () => {
+    store().addSiteFeature(square, "existing");
+    const id = store().siteFeatures[0].id;
+    tick();
+    const moved = square.map(
+      ([lat, lng]) => [lat + 0.0001, lng] as [number, number],
+    );
+    store().setSiteFeatureVertices(id, moved);
+    tick();
+    store().updateSiteFeature(id, { color: "#123456", name: "House" });
+
+    store().undo();
+    expect(store().siteFeatures[0].color).toBe("#94a3b8");
+    store().undo();
+    expect(store().siteFeatures[0].vertices).toEqual(square);
+    store().undo();
+    expect(store().siteFeatures).toHaveLength(0);
+  });
+
+  it("keeps at least three corners", () => {
+    store().addSiteFeature(square, "other");
+    const id = store().siteFeatures[0].id;
+    store().setSiteFeatureVertices(id, square.slice(0, 2));
+    expect(store().siteFeatures[0].vertices).toHaveLength(4);
+  });
+
+  it("selects one thing at a time and loads with the mission", () => {
+    store().addObstacle(square);
+    store().addSiteFeature(square, "other");
+    expect(store().selectedObstacleId).toBeNull();
+    store().selectObstacle(store().obstacles[0].id);
+    expect(store().selectedSiteFeatureId).toBeNull();
+
+    const features = store().siteFeatures;
+    store().loadMission({
+      name: "Saved",
+      config: store().config,
+      waypoints: [],
+      siteFeatures: features,
+    });
+    expect(store().siteFeatures).toEqual(features);
+    expect(store().past).toHaveLength(0);
+    store().loadMission({
+      name: "Old mission",
+      config: store().config,
+      waypoints: [],
+    });
+    expect(store().siteFeatures).toEqual([]);
+  });
+});

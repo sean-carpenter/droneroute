@@ -49,6 +49,8 @@ function normalizeActionParams(raw: unknown): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw)) {
     const name = key.replace(/^wpml:/, "");
+    // Written by the exporter on every photo and video action; not a setting.
+    if (name === "useGlobalPayloadLensIndex") continue;
     out[name] = BOOLEAN_PARAMS.has(name)
       ? value === 1 || value === "1" || value === true
       : value;
@@ -203,6 +205,22 @@ export async function parseWpmlArchive(zip: JSZip): Promise<ParsedMission> {
       mc["wpml:globalTransitionalSpeed"] || "10",
     ),
   };
+
+  // "latitude,longitude,altitude" of the reference take-off point, if any.
+  const refPoint = String(mc["wpml:takeOffRefPoint"] ?? "")
+    .split(",")
+    .map((part) => parseFloat(part));
+  if (
+    refPoint.length >= 2 &&
+    Math.abs(refPoint[0]) <= 90 &&
+    Math.abs(refPoint[1]) <= 180
+  ) {
+    config.takeoff = {
+      latitude: refPoint[0],
+      longitude: refPoint[1],
+      ...(Number.isFinite(refPoint[2]) ? { elevationM: refPoint[2] } : {}),
+    };
+  }
 
   // Determine which document contains the Folder with waypoints.
   // template.kml may have it, or — for mapping/area templates, whose

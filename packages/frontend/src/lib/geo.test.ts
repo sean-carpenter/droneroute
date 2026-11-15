@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { GIMBAL_PITCH_MAX, GIMBAL_PITCH_MIN, resolveGimbalAim } from "./geo";
+import {
+  GIMBAL_PITCH_MAX,
+  GIMBAL_PITCH_MIN,
+  OBSTACLE_CLEARANCE_M,
+  getObstacleWarnings,
+  isObstacleConflict,
+  resolveGimbalAim,
+  siteFeaturesAsObstacles,
+} from "./geo";
 
 const LAT = 41.25797;
 const LNG = 0.93229;
@@ -109,5 +117,149 @@ describe("resolveGimbalAim", () => {
         { pois: [poi(42, 3)] },
       );
     expect(run()).toEqual(run());
+  });
+});
+
+describe("getObstacleWarnings", () => {
+  // A square 20 m on a side, centered 30 m north of the origin.
+  const east = (m: number) =>
+    LNG + m / (111195 * Math.cos((LAT * Math.PI) / 180));
+  const square = (height?: number | null) => ({
+    id: "o1",
+    name: "Trees",
+    description: "",
+    vertices: [
+      [north(20), east(-10)],
+      [north(20), east(10)],
+      [north(40), east(10)],
+      [north(40), east(-10)],
+    ] as [number, number][],
+    ...(height === undefined ? {} : { height }),
+  });
+  const wp = (
+    index: number,
+    northM: number,
+    eastM: number,
+    height: number,
+  ) => ({
+    index,
+    latitude: north(northM),
+    longitude: east(eastM),
+    height,
+  });
+  const types = (warnings: ReturnType<typeof getObstacleWarnings>) =>
+    warnings.map((w) => `${w.waypointIndex}:${w.type}`);
+
+  // Waypoint 0 is west of the square, 1 inside it, 2 east of it.
+  const route = (height: number) => [
+    wp(0, 30, -30, height),
+    wp(1, 30, 0, height),
+    wp(2, 30, 30, height),
+  ];
+
+  it("flags everything when the obstacle has no height", () => {
+    for (const obstacle of [square(), square(null)]) {
+      const warnings = getObstacleWarnings(route(120), [obstacle]);
+      expect(types(warnings)).toEqual(["1:inside", "0:crosses", "1:crosses"]);
+      expect(warnings.every(isObstacleConflict)).toBe(true);
+    }
+  });
+
+  it("flags a route at or below the obstacle's height plus clearance", () => {
+    const below = OBSTACLE_CLEARANCE_M - 0.1;
+    expect(types(getObstacleWarnings(route(10), [square(25)]))).toEqual([
+      "1:inside",
+      "0:crosses",
+      "1:crosses",
+    ]);
+    expect(
+      getObstacleWarnings(route(25 + below), [square(25)]).every(
+        isObstacleConflict,
+      ),
+    ).toBe(true);
+  });
+
+  it("reports a route that clears the obstacle as passing over", () => {
+    const warnings = getObstacleWarnings(route(25 + OBSTACLE_CLEARANCE_M), [
+      square(25),
+    ]);
+    expect(types(warnings)).toEqual([
+      "1:passesOver",
+      "0:passesOver",
+      "1:passesOver",
+    ]);
+    expect(warnings.some(isObstacleConflict)).toBe(false);
+  });
+
+  it("judges a leg by its lower end", () => {
+    // Climbing from 12 m to 50 m across the square: the low end is in the trees.
+    const warnings = getObstacleWarnings(
+      [wp(0, 30, -30, 12), wp(1, 30, 30, 50)],
+      [square(25)],
+    );
+    expect(types(warnings)).toEqual(["0:crosses"]);
+  });
+
+  it("clears nothing when heights cannot be compared", () => {
+    const warnings = getObstacleWarnings(route(120), [square(25)], {
+      compareHeights: false,
+    });
+    expect(warnings.every(isObstacleConflict)).toBe(true);
+    // Waypoints without a height are never cleared either.
+    const bare = route(120).map(({ height: _height, ...rest }) => rest);
+    expect(
+      getObstacleWarnings(bare, [square(25)]).every(isObstacleConflict),
+    ).toBe(true);
+  });
+
+  it("leaves a route that stays outside alone", () => {
+    expect(
+      getObstacleWarnings([wp(0, 0, -30, 5), wp(1, 0, 30, 5)], [square(25)]),
+    ).toEqual([]);
+  });
+});
+
+describe("siteFeaturesAsObstacles", () => {
+  const base = {
+    id: "f",
+    name: "Garage",
+    kind: "garage" as const,
+    color: "#f59e0b",
+    vertices: [
+      [north(20), LNG - 0.0001],
+      [north(20), LNG + 0.0001],
+      [north(40), LNG + 0.0001],
+    ] as [number, number][],
+    isObstacle: true,
+    source: "manual" as const,
+  };
+
+  it("passes on buildings marked as obstacles, with their height", () => {
+    const out = siteFeaturesAsObstacles([
+      { ...base, heightM: 6 },
+      { ...base, id: "lot", kind: "lot", isObstacle: false },
+    ]);
+    expect(out).toEqual([
+      {
+        id: "f",
+        name: "Garage",
+        description: "",
+        vertices: base.vertices,
+        height: 6,
+      },
+    ]);
+    expect(siteFeaturesAsObstacles([base])[0].height).toBeNull();
+  });
+
+  it("makes a route through a building a conflict", () => {
+    const route = [
+      { index: 0, latitude: north(30), longitude: LNG - 0.001, height: 10 },
+      { index: 1, latitude: north(30), longitude: LNG + 0.001, height: 10 },
+    ];
+    const warnings = getObstacleWarnings(
+      route,
+      siteFeaturesAsObstacles([{ ...base, heightM: 6 }]),
+    );
+    expect(warnings.map((w) => w.type)).toEqual(["crosses"]);
   });
 });

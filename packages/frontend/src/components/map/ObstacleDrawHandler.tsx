@@ -1,6 +1,17 @@
 import { Source, Layer, Marker, useMap } from "react-map-gl/mapbox";
 import { useMissionStore } from "@/store/missionStore";
 import { useEffect, useMemo } from "react";
+import { SITE_FEATURE_KINDS } from "@droneroute/shared";
+
+/** Finish the shape as whatever is being drawn: a site feature or an obstacle. */
+function finishShape(vertices: [number, number][]) {
+  const state = useMissionStore.getState();
+  if (state.drawingSiteFeatureKind) {
+    state.addSiteFeature(vertices, state.drawingSiteFeatureKind);
+  } else {
+    state.addObstacle(vertices);
+  }
+}
 
 /**
  * Handles obstacle polygon drawing on the map.
@@ -13,6 +24,8 @@ export function ObstacleDrawHandler() {
   const setDrawingVertices = useMissionStore((s) => s.setDrawingVertices);
   const addObstacle = useMissionStore((s) => s.addObstacle);
   const setIsDrawingObstacle = useMissionStore((s) => s.setIsDrawingObstacle);
+  const featureKind = useMissionStore((s) => s.drawingSiteFeatureKind);
+  const color = featureKind ? SITE_FEATURE_KINDS[featureKind].color : "#ef4444";
   const { current: map } = useMap();
 
   // Escape key cancels drawing
@@ -46,7 +59,7 @@ export function ObstacleDrawHandler() {
             (firstPoint.y - clickPoint.y) ** 2,
         );
         if (dist < 15) {
-          addObstacle(currentVertices);
+          finishShape(currentVertices);
           return;
         }
       }
@@ -58,7 +71,7 @@ export function ObstacleDrawHandler() {
       e.preventDefault();
       const verts = useMissionStore.getState().drawingVertices;
       if (verts.length >= 3) {
-        addObstacle(verts);
+        finishShape(verts);
       }
     };
 
@@ -119,8 +132,8 @@ export function ObstacleDrawHandler() {
               width: i === 0 ? 14 : 10,
               height: i === 0 ? 14 : 10,
               borderRadius: "50%",
-              background: i === 0 ? "#fca5a5" : "#ffffff",
-              border: "2px solid #ef4444",
+              background: i === 0 ? color : "#ffffff",
+              border: `2px solid ${color}`,
             }}
           />
         </Marker>
@@ -133,7 +146,7 @@ export function ObstacleDrawHandler() {
             id="obstacle-drawing-line-layer"
             type="line"
             paint={{
-              "line-color": "#ef4444",
+              "line-color": color,
               "line-width": 2,
               "line-opacity": 0.8,
               "line-dasharray": [3, 2],
@@ -149,7 +162,7 @@ export function ObstacleDrawHandler() {
             id="obstacle-closing-line-layer"
             type="line"
             paint={{
-              "line-color": "#ef4444",
+              "line-color": color,
               "line-width": 1.5,
               "line-opacity": 0.4,
               "line-dasharray": [2, 3],

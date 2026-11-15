@@ -82,7 +82,7 @@ sharedRoutes.get("/shared/:token", (req, res) => {
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT m.id, m.name, m.config, m.waypoints, m.pois, m.obstacles, m.share_token, m.created_at, m.updated_at, u.email
+      `SELECT m.id, m.name, m.config, m.waypoints, m.pois, m.obstacles, m.site_features, m.share_token, m.created_at, m.updated_at, u.email
        FROM missions m
        LEFT JOIN users u ON m.user_id = u.id
        WHERE m.share_token = ?`,
@@ -105,6 +105,7 @@ sharedRoutes.get("/shared/:token", (req, res) => {
     waypoints: JSON.parse(row.waypoints),
     pois: JSON.parse(row.pois || "[]"),
     obstacles: JSON.parse(row.obstacles || "[]"),
+    siteFeatures: JSON.parse(row.site_features || "[]"),
   };
 
   res.json(mission);
@@ -118,7 +119,7 @@ sharedRoutes.post(
     const db = getDb();
     const row = db
       .prepare(
-        "SELECT name, config, waypoints, pois, obstacles FROM missions WHERE share_token = ?",
+        "SELECT name, config, waypoints, pois, obstacles, site_features FROM missions WHERE share_token = ?",
       )
       .get(req.params.token) as any;
 
@@ -131,7 +132,7 @@ sharedRoutes.post(
     const name = `${row.name} (copy)`;
 
     db.prepare(
-      "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles, site_features) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       id,
       name,
@@ -140,6 +141,7 @@ sharedRoutes.post(
       row.waypoints,
       row.pois || "[]",
       row.obstacles || "[]",
+      row.site_features || "[]",
     );
 
     res.status(201).json({ id, name });

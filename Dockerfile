@@ -41,8 +41,11 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/backend/package.json ./packages/backend/
 COPY packages/frontend/package.json ./packages/frontend/
 
+# Compile native addons against the headers bundled in the node image instead of
+# downloading them from nodejs.org (works offline and behind TLS-intercepting proxies).
 RUN apk add --no-cache python3 make g++ && \
     npm install --omit=dev --ignore-scripts && \
+    npm_config_nodedir=/usr/local \
     npm rebuild better-sqlite3 && \
     apk del python3 make g++
 

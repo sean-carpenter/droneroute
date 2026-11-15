@@ -220,7 +220,55 @@ export interface Obstacle {
   name: string;
   description: string;
   vertices: [number, number][]; // Array of [latitude, longitude] pairs
+  /**
+   * Top of the obstacle in meters above ground. When set, waypoints and legs
+   * that clear it are reported as passing over instead of as conflicts. Unset
+   * means the height is unknown, so everything inside or across it conflicts.
+   */
+  height?: number | null;
 }
+
+// ── Site feature ─────────────────────────────────────────
+
+/** What a site feature is. Each kind has a default color. */
+export type SiteFeatureKind =
+  | "existing"
+  | "garage"
+  | "addition"
+  | "lot"
+  | "other";
+
+/**
+ * A building, lot or other area on the site, drawn as a colored polygon the
+ * user can edit. Buildings count as obstacles for the route checks; a lot does
+ * not.
+ */
+export interface SiteFeature {
+  id: string;
+  name: string;
+  kind: SiteFeatureKind;
+  /** Color as #rrggbb. */
+  color: string;
+  vertices: [number, number][]; // [latitude, longitude] pairs
+  /** Height above ground in meters, when known. */
+  heightM?: number | null;
+  /** Checked against the route like an obstacle. */
+  isObstacle: boolean;
+  /** Where the outline came from. */
+  source: "manual" | "map";
+  note?: string;
+}
+
+export const SITE_FEATURE_KINDS: Record<
+  SiteFeatureKind,
+  { label: string; color: string; isObstacle: boolean }
+> = {
+  existing: { label: "Existing building", color: "#94a3b8", isObstacle: true },
+  garage: { label: "Garage", color: "#f59e0b", isObstacle: true },
+  addition: { label: "Addition", color: "#22c55e", isObstacle: true },
+  lot: { label: "Lot", color: "#22d3ee", isObstacle: false },
+  other: { label: "Other", color: "#a78bfa", isObstacle: true },
+};
 
 // ── Waypoint ─────────────────────────────────────────────
 
@@ -251,6 +299,44 @@ export interface Waypoint {
 
 // ── Mission Config ───────────────────────────────────────
 
+/**
+ * Where a mission is based: the site address and/or the spot the pilot
+ * launches from. A planning aid only — it is not written to the KMZ.
+ */
+export interface MissionHome {
+  latitude: number;
+  longitude: number;
+  /** The address the position was looked up from, when there is one. */
+  address?: string;
+}
+
+/**
+ * Where the drone takes off from and returns to. Shown on the map and written
+ * to the KMZ as the WPML reference take-off point.
+ */
+export interface TakeoffPoint {
+  latitude: number;
+  longitude: number;
+  /** Elevation of the ground at this spot, in meters. 0 when not known. */
+  elevationM?: number;
+}
+
+/** Which arrangement of files to use inside an exported KMZ. */
+export type KmzLayout = "root" | "wpmz";
+
+/**
+ * File name for an exported KMZ. DJI apps (FlightHub 2, Pilot 2) take the
+ * route name from the file name and refuse < > : " / | ? * . _ and \, so the
+ * name keeps only letters, digits, spaces and hyphens.
+ */
+export function kmzFileName(name: string): string {
+  const clean = name
+    .replace(/[^\p{L}\p{N} -]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return `${clean || "mission"}.kmz`;
+}
+
 export interface MissionConfig {
   droneEnumValue: number;
   droneSubEnumValue: number;
@@ -267,6 +353,8 @@ export interface MissionConfig {
   globalHeadingMode: HeadingMode;
   globalTurnMode: TurnMode;
   gimbalPitchMode: GimbalPitchMode;
+  home?: MissionHome;
+  takeoff?: TakeoffPoint;
 }
 
 // ── Mission ──────────────────────────────────────────────
@@ -281,6 +369,7 @@ export interface Mission {
   waypoints: Waypoint[];
   pois: PointOfInterest[];
   obstacles: Obstacle[];
+  siteFeatures?: SiteFeature[];
 }
 
 // ── Shared Mission ──────────────────────────────────────
@@ -296,6 +385,7 @@ export interface SharedMission {
   waypoints: Waypoint[];
   pois: PointOfInterest[];
   obstacles: Obstacle[];
+  siteFeatures?: SiteFeature[];
 }
 
 // ── Route proposals (drafted by an AI agent, reviewed by the user) ──────

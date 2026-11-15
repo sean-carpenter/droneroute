@@ -5,8 +5,14 @@ import type {
   WaypointAction,
   PointOfInterest,
   Obstacle,
+  SiteFeature,
+  SiteFeatureKind,
 } from "@droneroute/shared";
-import { DEFAULT_MISSION_CONFIG, DEFAULT_WAYPOINT } from "@droneroute/shared";
+import {
+  DEFAULT_MISSION_CONFIG,
+  DEFAULT_WAYPOINT,
+  SITE_FEATURE_KINDS,
+} from "@droneroute/shared";
 import { usePreferencesStore } from "@/store/preferencesStore";
 import type { TemplateType } from "@/lib/templates";
 import type { TemplateSeed } from "@/lib/proposal";
@@ -21,6 +27,7 @@ export interface MissionSnapshot {
   waypoints: Waypoint[];
   pois: PointOfInterest[];
   obstacles: Obstacle[];
+  siteFeatures: SiteFeature[];
 }
 
 /** Maximum number of undo steps kept. */
@@ -52,6 +59,12 @@ interface MissionState {
   isDrawingObstacle: boolean;
   drawingVertices: [number, number][];
 
+  // Site features: buildings, lot and other areas
+  siteFeatures: SiteFeature[];
+  selectedSiteFeatureId: string | null;
+  /** Set while the obstacle drawing tool is drawing a site feature instead. */
+  drawingSiteFeatureKind: SiteFeatureKind | null;
+
   // History
   past: MissionSnapshot[];
   future: MissionSnapshot[];
@@ -76,6 +89,12 @@ interface MissionState {
   setMissionName: (name: string) => void;
   setMissionId: (id: string | null) => void;
   setConfig: (config: Partial<MissionConfig>) => void;
+  /** Bumped to ask the map to centre on the mission home. */
+  homeFocusNonce: number;
+  focusHome: () => void;
+  /** Bumped to ask the map to drop the drone home point at its centre. */
+  takeoffPlaceNonce: number;
+  placeTakeoff: () => void;
   addWaypoint: (lat: number, lng: number) => void;
   updateWaypoint: (index: number, updates: Partial<Waypoint>) => void;
   removeWaypoint: (index: number) => void;
@@ -113,7 +132,7 @@ interface MissionState {
   ) => void;
 
   // Obstacle actions
-  addObstacle: (vertices: [number, number][]) => void;
+  addObstacle: (vertices: [number, number][], height?: number | null) => void;
   updateObstacle: (id: string, updates: Partial<Obstacle>) => void;
   removeObstacle: (id: string) => void;
   moveObstacleVertex: (
@@ -131,6 +150,22 @@ interface MissionState {
   removeObstacleVertex: (id: string, vertexIndex: number) => void;
   selectObstacle: (id: string | null) => void;
   setIsDrawingObstacle: (drawing: boolean) => void;
+
+  // Site feature actions
+  addSiteFeature: (
+    vertices: [number, number][],
+    kind: SiteFeatureKind,
+    options?: {
+      name?: string;
+      heightM?: number | null;
+      source?: SiteFeature["source"];
+    },
+  ) => void;
+  updateSiteFeature: (id: string, updates: Partial<SiteFeature>) => void;
+  setSiteFeatureVertices: (id: string, vertices: [number, number][]) => void;
+  removeSiteFeature: (id: string) => void;
+  selectSiteFeature: (id: string | null) => void;
+  startDrawingSiteFeature: (kind: SiteFeatureKind) => void;
   setDrawingVertices: (vertices: [number, number][]) => void;
 
   // Mission actions
@@ -143,6 +178,7 @@ interface MissionState {
     waypoints: Waypoint[];
     pois?: PointOfInterest[];
     obstacles?: Obstacle[];
+    siteFeatures?: SiteFeature[];
   }) => void;
   clearMission: () => void;
   setDirty: (dirty: boolean) => void;
@@ -153,6 +189,7 @@ const CLEARED_SELECTION = {
   lastSelectedWaypointIndex: null,
   selectedPoiId: null,
   selectedObstacleId: null,
+  selectedSiteFeatureId: null,
 };
 
 function snapshotOf(state: MissionSnapshot): MissionSnapshot {
@@ -163,6 +200,7 @@ function snapshotOf(state: MissionSnapshot): MissionSnapshot {
     waypoints: state.waypoints,
     pois: state.pois,
     obstacles: state.obstacles,
+    siteFeatures: state.siteFeatures,
   };
 }
 
@@ -172,6 +210,7 @@ function documentChanged(a: MissionSnapshot, b: MissionSnapshot): boolean {
     a.waypoints !== b.waypoints ||
     a.pois !== b.pois ||
     a.obstacles !== b.obstacles ||
+    a.siteFeatures !== b.siteFeatures ||
     a.config !== b.config ||
     a.missionName !== b.missionName
   );
@@ -195,6 +234,9 @@ export const useMissionStore = create<MissionState>((set, get) => ({
   selectedObstacleId: null,
   isDrawingObstacle: false,
   drawingVertices: [],
+  siteFeatures: [],
+  selectedSiteFeatureId: null,
+  drawingSiteFeatureKind: null,
   isAddingWaypoint: true,
   isAddingPoi: false,
   templateMode: null,
@@ -263,6 +305,14 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       config: { ...state.config, ...updates },
       dirty: true,
     })),
+
+  homeFocusNonce: 0,
+  focusHome: () =>
+    set((state) => ({ homeFocusNonce: state.homeFocusNonce + 1 })),
+
+  takeoffPlaceNonce: 0,
+  placeTakeoff: () =>
+    set((state) => ({ takeoffPlaceNonce: state.takeoffPlaceNonce + 1 })),
 
   addWaypoint: (lat, lng) =>
     set((state) => {
@@ -555,13 +605,14 @@ export const useMissionStore = create<MissionState>((set, get) => ({
     })),
 
   // Obstacle actions
-  addObstacle: (vertices) =>
+  addObstacle: (vertices, height) =>
     set((state) => {
       const obstacle: Obstacle = {
         id: crypto.randomUUID(),
         name: `Obstacle ${state.obstacles.length + 1}`,
         description: "",
         vertices,
+        ...(typeof height === "number" ? { height } : {}),
       };
       return {
         obstacles: [...state.obstacles, obstacle],
@@ -622,11 +673,16 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       dirty: true,
     })),
 
-  selectObstacle: (id) => set({ selectedObstacleId: id }),
+  selectObstacle: (id) =>
+    set((state) => ({
+      selectedObstacleId: id,
+      selectedSiteFeatureId: id ? null : state.selectedSiteFeatureId,
+    })),
 
   setIsDrawingObstacle: (drawing) =>
     set((state) => ({
       isDrawingObstacle: drawing,
+      drawingSiteFeatureKind: null,
       isAddingWaypoint: drawing ? false : state.isAddingWaypoint,
       isAddingPoi: drawing ? false : state.isAddingPoi,
       templateMode: drawing ? null : state.templateMode,
@@ -638,6 +694,73 @@ export const useMissionStore = create<MissionState>((set, get) => ({
     })),
 
   setDrawingVertices: (vertices) => set({ drawingVertices: vertices }),
+
+  // Site feature actions
+  addSiteFeature: (vertices, kind, options = {}) =>
+    set((state) => {
+      const defaults = SITE_FEATURE_KINDS[kind];
+      const sameKind = state.siteFeatures.filter((f) => f.kind === kind).length;
+      const feature: SiteFeature = {
+        id: crypto.randomUUID(),
+        name:
+          options.name ??
+          (sameKind === 0
+            ? defaults.label
+            : `${defaults.label} ${sameKind + 1}`),
+        kind,
+        color: defaults.color,
+        vertices,
+        ...(typeof options.heightM === "number"
+          ? { heightM: options.heightM }
+          : {}),
+        isObstacle: defaults.isObstacle,
+        source: options.source ?? "manual",
+      };
+      return {
+        siteFeatures: [...state.siteFeatures, feature],
+        selectedSiteFeatureId: feature.id,
+        selectedObstacleId: null,
+        isDrawingObstacle: false,
+        drawingSiteFeatureKind: null,
+        drawingVertices: [],
+        dirty: true,
+      };
+    }),
+
+  updateSiteFeature: (id, updates) =>
+    set((state) => ({
+      siteFeatures: state.siteFeatures.map((f) =>
+        f.id === id ? { ...f, ...updates } : f,
+      ),
+      dirty: true,
+    })),
+
+  setSiteFeatureVertices: (id, vertices) =>
+    set((state) => ({
+      siteFeatures: state.siteFeatures.map((f) =>
+        f.id === id && vertices.length >= 3 ? { ...f, vertices } : f,
+      ),
+      dirty: true,
+    })),
+
+  removeSiteFeature: (id) =>
+    set((state) => ({
+      siteFeatures: state.siteFeatures.filter((f) => f.id !== id),
+      selectedSiteFeatureId:
+        state.selectedSiteFeatureId === id ? null : state.selectedSiteFeatureId,
+      dirty: true,
+    })),
+
+  selectSiteFeature: (id) =>
+    set((state) => ({
+      selectedSiteFeatureId: id,
+      selectedObstacleId: id ? null : state.selectedObstacleId,
+    })),
+
+  startDrawingSiteFeature: (kind) => {
+    get().setIsDrawingObstacle(true);
+    set({ drawingSiteFeatureKind: kind, selectedSiteFeatureId: null });
+  },
 
   setTemplateMode: (mode) =>
     set({
@@ -720,10 +843,12 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       waypoints: data.waypoints,
       pois: data.pois || [],
       obstacles: data.obstacles || [],
+      siteFeatures: data.siteFeatures || [],
       selectedWaypointIndices: new Set<number>(),
       lastSelectedWaypointIndex: null,
       selectedPoiId: null,
       selectedObstacleId: null,
+      selectedSiteFeatureId: null,
       dirty: false,
     });
     restoringHistory = false;
@@ -738,11 +863,14 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       waypoints: [],
       pois: [],
       obstacles: [],
+      siteFeatures: [],
       selectedWaypointIndices: new Set<number>(),
       lastSelectedWaypointIndex: null,
       selectedPoiId: null,
       selectedObstacleId: null,
+      selectedSiteFeatureId: null,
       isDrawingObstacle: false,
+      drawingSiteFeatureKind: null,
       drawingVertices: [],
       dirty: false,
     });

@@ -20,6 +20,7 @@ import {
   UserCog,
   CircleHelp,
   Triangle,
+  Building2,
   Shield,
   BatteryWarning,
 } from "lucide-react";
@@ -29,8 +30,12 @@ import { MapView } from "@/components/map/MapView";
 import { WaypointList } from "@/components/waypoint/WaypointList";
 import { BulkActionToolbar } from "@/components/waypoint/BulkActionToolbar";
 import { MissionConfig } from "@/components/mission/MissionConfig";
+import { MissionHome } from "@/components/mission/MissionHome";
+import { TakeoffPoint } from "@/components/mission/TakeoffPoint";
+import { kmzFileName } from "@droneroute/shared";
 import { PoiList } from "@/components/mission/PoiList";
 import { ObstacleList } from "@/components/mission/ObstacleList";
+import { SiteFeatureList } from "@/components/mission/SiteFeatureList";
 import { RoutesPage } from "@/components/routes/RoutesPage";
 import { SharedMissionPage } from "@/components/routes/SharedMissionPage";
 import { AdminPage } from "@/pages/AdminPage";
@@ -48,7 +53,13 @@ import { usePreferencesStore } from "@/store/preferencesStore";
 import { formatDistance } from "@/lib/units";
 import { useAirspaceStore } from "@/store/airspaceStore";
 import { api } from "@/lib/api";
-import { getObstacleWarnings, getAirspaceWarnings } from "@/lib/geo";
+import {
+  getObstacleWarnings,
+  getAirspaceWarnings,
+  isObstacleConflict,
+  siteFeaturesAsObstacles,
+  OBSTACLE_CLEARANCE_M,
+} from "@/lib/geo";
 import { estimateMission, formatDuration } from "@/lib/missionStats";
 import { useWindStore } from "@/store/windStore";
 import { useSimulationStore } from "@/store/simulationStore";
@@ -60,7 +71,7 @@ import {
 
 const IMPORT_ACCEPT = ".kmz,.kml,.gpx,.csv";
 
-type SidebarSection = "waypoints" | "pois" | "obstacles" | "config";
+type SidebarSection = "waypoints" | "pois" | "site" | "obstacles" | "config";
 
 export default function App() {
   const {
@@ -72,6 +83,7 @@ export default function App() {
     waypoints,
     pois,
     obstacles,
+    siteFeatures,
     loadMission,
     currentPage,
     setCurrentPage,
@@ -86,6 +98,7 @@ export default function App() {
   >({
     waypoints: true,
     pois: false,
+    site: true,
     obstacles: false,
     config: false,
   });
@@ -148,19 +161,35 @@ export default function App() {
     const handler = (e: BeforeUnloadEvent) => {
       if (
         dirty &&
-        (waypoints.length > 1 || pois.length > 0 || obstacles.length > 0)
+        (waypoints.length > 1 ||
+          pois.length > 0 ||
+          obstacles.length > 0 ||
+          siteFeatures.length > 0)
       ) {
         e.preventDefault();
       }
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty, waypoints.length, pois.length, obstacles.length]);
+  }, [
+    dirty,
+    waypoints.length,
+    pois.length,
+    obstacles.length,
+    siteFeatures.length,
+  ]);
 
-  // Obstacle warnings
+  // Obstacle warnings: drawn obstacles plus buildings marked as obstacles
+  const checkedObstacles = useMemo(
+    () => [...obstacles, ...siteFeaturesAsObstacles(siteFeatures)],
+    [obstacles, siteFeatures],
+  );
   const obstacleWarnings = useMemo(
-    () => getObstacleWarnings(waypoints, obstacles),
-    [waypoints, obstacles],
+    () =>
+      getObstacleWarnings(waypoints, checkedObstacles, {
+        compareHeights: config.heightMode !== "EGM96",
+      }),
+    [waypoints, checkedObstacles, config.heightMode],
   );
 
   // Airspace warnings
@@ -184,11 +213,29 @@ export default function App() {
   // Aggregated warnings for overlay
   const warnings = useMemo(() => {
     const result: Warning[] = [];
-    if (obstacles.length > 0 && obstacleWarnings.length > 0) {
+    const obstacleConflicts = obstacleWarnings.filter(isObstacleConflict);
+    if (checkedObstacles.length > 0 && obstacleConflicts.length > 0) {
       result.push({
         id: "obstacle",
         type: "obstacle",
-        message: `${obstacleWarnings.length} obstacle warning${obstacleWarnings.length > 1 ? "s" : ""} — waypoints conflict with restricted zones`,
+        message: `${obstacleConflicts.length} obstacle warning${obstacleConflicts.length > 1 ? "s" : ""} — waypoints conflict with restricted zones`,
+      });
+    }
+    const passedOver = new Set(
+      obstacleWarnings
+        .filter((w) => !isObstacleConflict(w))
+        .map((w) => w.obstacleId),
+    );
+    if (passedOver.size > 0) {
+      const names = checkedObstacles
+        .filter((o) => passedOver.has(o.id))
+        .map((o) => `${o.name} (${o.height} m)`)
+        .join(", ");
+      result.push({
+        id: "obstacle-over",
+        type: "obstacle",
+        info: true,
+        message: `Route passes over ${passedOver.size} obstacle${passedOver.size > 1 ? "s" : ""} with at least ${OBSTACLE_CLEARANCE_M} m to spare: ${names}`,
       });
     }
     if (flightStats && flightStats.batteriesNeeded > 1) {
@@ -238,7 +285,7 @@ export default function App() {
     return result;
   }, [
     obstacleWarnings,
-    obstacles.length,
+    checkedObstacles,
     flightStats,
     config.maxBatteryMinutes,
     airspaceWarnings,
@@ -266,7 +313,7 @@ export default function App() {
     setExpandedSections((prev) => ({ ...prev, [section]: !prev[section] }));
   };
 
-  const handleExport = async () => {
+  const handleExport = async (target?: "flighthub2") => {
     if (waypoints.length < 2) {
       toast.warning("Need at least 2 waypoints to export");
       return;
@@ -279,14 +326,21 @@ export default function App() {
         config,
         waypoints,
         pois,
+        target,
       });
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${missionName.replace(/[^a-zA-Z0-9_-]/g, "_")}.kmz`;
+      a.download = kmzFileName(missionName);
       a.click();
       URL.revokeObjectURL(url);
+      if (config.heightMode === "aboveGroundLevel") {
+        toast.info(
+          "Heights are written relative to the takeoff point. Take off from ground level with the site",
+          { duration: 8000 },
+        );
+      }
     } catch (err: any) {
       toast.error(`Export failed: ${err.message}`);
     } finally {
@@ -312,27 +366,32 @@ export default function App() {
       toast.warning("Please enter a mission name before saving");
       return;
     }
+    const name = missionName.trim();
     setSaving(true);
     try {
       if (missionId) {
         await api.put(`/missions/${missionId}`, {
-          name: missionName,
+          name,
           config,
           waypoints,
           pois,
           obstacles,
+          siteFeatures,
         });
       } else {
         const result = await api.post<{ id: string }>("/missions", {
-          name: missionName,
+          name,
           config,
           waypoints,
           pois,
           obstacles,
+          siteFeatures,
         });
         setMissionId(result.id);
       }
+      if (name !== missionName) setMissionName(name);
       setDirty(false);
+      toast.success(`Saved "${name}"`);
     } catch (err: any) {
       toast.error(`Save failed: ${err.message}`);
     } finally {
@@ -500,6 +559,7 @@ export default function App() {
           setIsAddingPoi(false);
           setIsDrawingObstacle(false);
           setTemplateMode(null);
+          useMissionStore.getState().selectSiteFeature(null);
           useSimulationStore.getState().close();
           break;
         case "delete":
@@ -577,7 +637,7 @@ export default function App() {
                 size="icon"
                 onClick={() => setCurrentPage("routes")}
                 className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                title="My routes"
+                title="Saved missions"
               >
                 <FolderOpen className="h-4 w-4" />
               </Button>
@@ -604,10 +664,13 @@ export default function App() {
             placeholder="Mission name"
             title="Name your mission for easy identification"
           />
+          {/* Remounted per mission so a half-typed home never carries over */}
+          <MissionHome key={missionId ?? "new"} />
+          <TakeoffPoint key={`takeoff-${missionId ?? "new"}`} />
         </div>
 
-        {/* Toolbar */}
-        <div className="flex gap-1 p-2 border-b border-border">
+        {/* Toolbar: two rows of two, so four buttons fit the sidebar */}
+        <div className="grid grid-cols-2 gap-1 p-2 border-b border-border">
           <Button
             variant="outline"
             size="sm"
@@ -622,7 +685,7 @@ export default function App() {
           <Button
             variant="outline"
             size="sm"
-            onClick={handleExport}
+            onClick={() => handleExport()}
             disabled={exporting || waypoints.length < 2}
             className="flex-1 text-xs h-7 border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/15 hover:text-blue-300"
             title={
@@ -633,6 +696,21 @@ export default function App() {
           >
             <Download className="h-3 w-3" />
             {exporting ? "..." : "Export KMZ"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleExport("flighthub2")}
+            disabled={exporting || waypoints.length < 2}
+            className="flex-1 text-xs h-7 border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/15 hover:text-blue-300"
+            title={
+              waypoints.length < 2
+                ? "Add at least 2 waypoints to export"
+                : "Export a KMZ arranged for import into DJI FlightHub 2 or DJI Pilot 2"
+            }
+          >
+            <Download className="h-3 w-3" />
+            {exporting ? "..." : "FlightHub 2"}
           </Button>
           <Button
             variant="outline"
@@ -695,6 +773,28 @@ export default function App() {
             {expandedSections.pois && (
               <div className="max-h-[30vh] overflow-y-auto section-expand">
                 <PoiList />
+              </div>
+            )}
+          </div>
+
+          {/* Site section — EMERALD accent */}
+          <div className="border-l-2 border-emerald-500/70 bg-emerald-500/[0.03]">
+            <button
+              className="flex items-center gap-2 w-full px-3 py-2 text-xs font-semibold uppercase tracking-wider bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-400"
+              onClick={() => toggleSection("site")}
+              title="Buildings, the lot and other areas on the site"
+            >
+              {expandedSections.site ? (
+                <ChevronDown className="h-3 w-3" />
+              ) : (
+                <ChevronRight className="h-3 w-3" />
+              )}
+              <Building2 className="h-3 w-3" />
+              Site ({siteFeatures.length})
+            </button>
+            {expandedSections.site && (
+              <div className="max-h-[35vh] overflow-y-auto section-expand">
+                <SiteFeatureList />
               </div>
             )}
           </div>

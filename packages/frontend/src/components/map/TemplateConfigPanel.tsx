@@ -9,6 +9,7 @@ import {
   heightLabel,
   speedLabel,
   distanceLabel,
+  formatDistance,
   toDisplayHeight,
   fromDisplayHeight,
   toDisplaySpeed,
@@ -22,9 +23,12 @@ import type {
   OrbitParams,
   GridParams,
   FacadeParams,
+  FacadeBoundaryKind,
   PencilParams,
   CorridorParams,
   TowerParams,
+  BoundaryFacadeParams,
+  BoundaryFacadeResult,
   TemplateResult,
 } from "@/lib/templates";
 import { corridorLayout, gridSpacing } from "@/lib/templates";
@@ -32,15 +36,66 @@ import { cameraForPayload } from "@/lib/camera";
 import { useMissionStore } from "@/store/missionStore";
 import { SurveyFields } from "./SurveyFields";
 import { CameraAimSection } from "./CameraAimSection";
+import { BoundaryFacadeFields } from "./BoundaryFacadeFields";
 import type { PointOfInterest } from "@droneroute/shared";
 
 const NO_WAYPOINTS: TemplateResult["waypoints"] = [];
+
+const FACADE_COPY: Record<
+  FacadeBoundaryKind,
+  { title: string; description: string; hint: string }
+> = {
+  wall: {
+    title: "Facade scan",
+    description:
+      "Vertical scanning pattern along a wall or building face. Set the standoff distance, altitude range, and grid density for full coverage.",
+    hint: "Drag along the wall.",
+  },
+  circle: {
+    title: "Circle facade",
+    description:
+      "Orbits or vertical columns around a round structure. The circle you draw is the wall. The drone stays the target distance outside it.",
+    hint: "Drag from the center out to the wall.",
+  },
+  spiral: {
+    title: "Spiral facade",
+    description:
+      "One climbing spiral around a round structure. The circle you draw is the wall. Add a second radius to taper it.",
+    hint: "Drag from the center out to the wall.",
+  },
+  polygon: {
+    title: "Polygon facade",
+    description:
+      "Orbits or vertical columns around a building outline. The drone stays the target distance outside the polygon.",
+    hint: "Click each corner. Double-click, or click the first corner, to close.",
+  },
+};
+
+const BOUNDARY_CHOICE =
+  "flex-1 px-2 py-1 rounded border text-[11px] transition-colors";
 
 interface TemplateConfigPanelProps {
   type: TemplateType;
   orbitParams?: OrbitParams | null;
   gridParams?: GridParams | null;
   facadeParams?: FacadeParams | null;
+  facadeBoundary?: FacadeBoundaryKind;
+  onFacadeBoundaryChange?: (kind: FacadeBoundaryKind) => void;
+  /** Facade tool is open, but the outline is not finished yet. */
+  drawing?: boolean;
+  /** Structure radius while a circle or spiral is being dragged. */
+  liveRadiusM?: number | null;
+  boundaryParams?: BoundaryFacadeParams | null;
+  onBoundaryChange?: (params: BoundaryFacadeParams) => void;
+  boundaryInfo?: Pick<
+    BoundaryFacadeResult,
+    | "plannedCount"
+    | "selfCrossing"
+    | "horizontalM"
+    | "verticalM"
+    | "passes"
+    | "passLabel"
+  > | null;
   pencilParams?: PencilParams | null;
   corridorParams?: CorridorParams | null;
   onCorridorChange?: (params: CorridorParams) => void;
@@ -63,6 +118,13 @@ export function TemplateConfigPanel({
   orbitParams,
   gridParams,
   facadeParams,
+  facadeBoundary = "wall",
+  onFacadeBoundaryChange,
+  drawing = false,
+  liveRadiusM = null,
+  boundaryParams,
+  onBoundaryChange,
+  boundaryInfo,
   pencilParams,
   corridorParams,
   onCorridorChange,
@@ -81,13 +143,14 @@ export function TemplateConfigPanel({
   const unitSystem = usePreferencesStore((s) => s.preferences.unitSystem);
   const payloadEnumValue = useMissionStore((s) => s.config.payloadEnumValue);
   const { camera, exact: cameraExact } = cameraForPayload(payloadEnumValue);
+  const facadeCopy = FACADE_COPY[facadeBoundary];
   const title =
     type === "orbit"
       ? "Orbit"
       : type === "grid"
         ? "Grid survey"
         : type === "facade"
-          ? "Facade scan"
+          ? facadeCopy.title
           : type === "corridor"
             ? "Corridor survey"
             : type === "tower"
@@ -99,7 +162,13 @@ export function TemplateConfigPanel({
       : type === "grid"
         ? "Lawn-mower zigzag pattern for systematic area coverage. Control line spacing for overlap and rotation to align with the terrain."
         : type === "facade"
-          ? "Vertical scanning pattern along a wall or building face. Set the standoff distance, altitude range, and grid density for full coverage."
+          ? drawing
+            ? `${
+                liveRadiusM != null
+                  ? `${formatDistance(liveRadiusM, unitSystem)} from center. `
+                  : ""
+              }${facadeCopy.hint}`
+            : facadeCopy.description
           : type === "corridor"
             ? "Parallel survey lines along the path you drew, for roads, rivers and power lines. Set the corridor width and overlap; the number of lines follows from the camera footprint."
             : type === "tower"
@@ -141,10 +210,12 @@ export function TemplateConfigPanel({
           <span className="text-xs font-semibold uppercase tracking-wider text-purple-400">
             {title}
           </span>
-          <Badge variant="secondary" className="text-[10px] gap-1">
-            <MapPin className="h-3 w-3" />
-            {waypointCount} waypoints
-          </Badge>
+          {!drawing && (
+            <Badge variant="secondary" className="text-[10px] gap-1">
+              <MapPin className="h-3 w-3" />
+              {waypointCount} waypoints
+            </Badge>
+          )}
         </div>
         <button
           onClick={onCancel}
@@ -676,8 +747,53 @@ export function TemplateConfigPanel({
           </div>
         )}
 
+      {/* Facade boundary */}
+      {type === "facade" && onFacadeBoundaryChange && (
+        <>
+          <div className="flex gap-1 mb-2">
+            {(
+              [
+                ["wall", "Wall"],
+                ["circle", "Circle"],
+                ["spiral", "Spiral"],
+                ["polygon", "Polygon"],
+              ] as const
+            ).map(([kind, label]) => (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => onFacadeBoundaryChange(kind)}
+                className={`${BOUNDARY_CHOICE} ${facadeBoundary === kind ? "border-purple-400 bg-purple-500/20 text-purple-200" : "border-border text-muted-foreground hover:text-foreground"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] text-muted-foreground mb-3">
+            Turn on airspace (A) before flying a facade.
+          </p>
+        </>
+      )}
+
       {/* Facade params */}
-      {type === "facade" && facadeParams && onFacadeChange && (
+      {type === "facade" &&
+        !drawing &&
+        boundaryParams &&
+        onBoundaryChange &&
+        boundaryInfo && (
+          <BoundaryFacadeFields
+            params={boundaryParams}
+            onChange={onBoundaryChange}
+            info={boundaryInfo}
+            waypointCount={waypointCount}
+            cameraLabel={camera.label}
+            cameraExact={cameraExact}
+            pois={pois}
+            previewWaypoints={previewWaypoints}
+          />
+        )}
+
+      {type === "facade" && !drawing && facadeParams && onFacadeChange && (
         <>
           <div className="grid grid-cols-2 gap-2 mb-3">
             <div>
@@ -901,19 +1017,21 @@ export function TemplateConfigPanel({
 
       {/* Action buttons */}
       <div className="flex gap-2">
-        <Button
-          size="sm"
-          onClick={onApply}
-          className="flex-1 h-7 text-xs bg-purple-600 hover:bg-purple-700 text-white"
-        >
-          <Check className="h-3 w-3 mr-1" />
-          Apply
-        </Button>
+        {!drawing && (
+          <Button
+            size="sm"
+            onClick={onApply}
+            className="flex-1 h-7 text-xs bg-purple-600 hover:bg-purple-700 text-white"
+          >
+            <Check className="h-3 w-3 mr-1" />
+            Apply
+          </Button>
+        )}
         <Button
           variant="outline"
           size="sm"
           onClick={onCancel}
-          className="h-7 text-xs"
+          className={drawing ? "flex-1 h-7 text-xs" : "h-7 text-xs"}
         >
           Cancel
         </Button>

@@ -121,6 +121,59 @@ describe("validateMissionCreate", () => {
       }),
     ).toBe("obstacle vertex out of range");
   });
+
+  it("accepts an obstacle with or without a height, and rejects a bad one", () => {
+    const square = [
+      [41, 0],
+      [41, 1],
+      [42, 1],
+    ];
+    const withHeight = (height: unknown) => ({
+      ...validCreate,
+      obstacles: [{ name: "Trees", vertices: square, height }],
+    });
+    expect(validateMissionCreate(withHeight(25))).toBeNull();
+    expect(validateMissionCreate(withHeight(0))).toBeNull();
+    expect(validateMissionCreate(withHeight(null))).toBeNull();
+    expect(validateMissionCreate(withHeight(undefined))).toBeNull();
+    for (const bad of [-1, 1001, "25", Number.NaN]) {
+      expect(validateMissionCreate(withHeight(bad))).toBe(
+        "invalid obstacle height",
+      );
+    }
+  });
+});
+
+describe("mission home", () => {
+  const withHome = (home: unknown) => ({
+    ...validCreate,
+    config: { ...validCreate.config, home },
+  });
+
+  it("accepts a home with or without an address", () => {
+    expect(
+      validateMissionCreate(withHome({ latitude: 38.58, longitude: -121.49 })),
+    ).toBeNull();
+    expect(
+      validateMissionCreate(
+        withHome({ latitude: 38.58, longitude: -121.49, address: "1 Main St" }),
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects a malformed home on create and update", () => {
+    expect(validateMissionCreate(withHome("here"))).toBe(
+      "invalid mission home",
+    );
+    expect(
+      validateMissionCreate(withHome({ latitude: 95, longitude: 0 })),
+    ).toBe("mission home coordinates out of range");
+    expect(
+      validateMissionUpdate({
+        config: { home: { latitude: 1, longitude: 2, address: 5 } },
+      }),
+    ).toBe("invalid mission home address");
+  });
 });
 
 describe("validateMissionUpdate", () => {
@@ -150,5 +203,122 @@ describe("validateMissionGeometry", () => {
         waypoints: [{ ...validWaypoint, latitude: 999 }],
       }),
     ).toBe("waypoint coordinates out of range");
+  });
+});
+
+describe("drone home point", () => {
+  const withTakeoff = (takeoff: unknown) => ({
+    ...validCreate,
+    config: { ...validCreate.config, takeoff },
+  });
+
+  it("accepts a point with or without an elevation", () => {
+    expect(
+      validateMissionCreate(
+        withTakeoff({ latitude: 38.58, longitude: -121.49 }),
+      ),
+    ).toBeNull();
+    expect(
+      validateMissionCreate(
+        withTakeoff({ latitude: 38.58, longitude: -121.49, elevationM: 12.5 }),
+      ),
+    ).toBeNull();
+    expect(validateMissionCreate(withTakeoff(undefined))).toBeNull();
+  });
+
+  it("rejects a malformed point on create and update", () => {
+    expect(validateMissionCreate(withTakeoff("here"))).toBe(
+      "invalid drone home point",
+    );
+    expect(
+      validateMissionCreate(withTakeoff({ latitude: 95, longitude: 0 })),
+    ).toBe("drone home point coordinates out of range");
+    expect(
+      validateMissionCreate(
+        withTakeoff({ latitude: 38, longitude: 0, elevationM: "high" }),
+      ),
+    ).toBe("invalid drone home point elevation");
+    expect(
+      validateMissionUpdate({
+        config: { ...validCreate.config, takeoff: { latitude: 0 } },
+      }),
+    ).toBe("drone home point coordinates out of range");
+  });
+});
+
+describe("site features", () => {
+  const square: [number, number][] = [
+    [42.559, -71.078],
+    [42.559, -71.0778],
+    [42.5592, -71.0778],
+  ];
+  const feature = (extra: Record<string, unknown> = {}) => ({
+    id: "f1",
+    name: "Existing house",
+    kind: "existing",
+    color: "#94a3b8",
+    vertices: square,
+    isObstacle: true,
+    source: "manual",
+    ...extra,
+  });
+  const withFeatures = (siteFeatures: unknown) => ({
+    ...validCreate,
+    siteFeatures,
+  });
+
+  it("accepts well-formed features, with or without height", () => {
+    expect(validateMissionCreate(withFeatures([feature()]))).toBeNull();
+    expect(
+      validateMissionCreate(
+        withFeatures([feature({ heightM: 7.7, note: "Ridge 25'-3\"" })]),
+      ),
+    ).toBeNull();
+    expect(
+      validateMissionCreate(withFeatures([feature({ heightM: null })])),
+    ).toBeNull();
+    expect(validateMissionCreate(validCreate)).toBeNull(); // optional
+  });
+
+  it("rejects bad kinds, colors, corners and flags", () => {
+    expect(validateMissionCreate(withFeatures("nope"))).toBe(
+      "siteFeatures must be an array",
+    );
+    expect(
+      validateMissionCreate(withFeatures([feature({ kind: "shed" })])),
+    ).toBe("invalid site feature kind");
+    expect(
+      validateMissionCreate(withFeatures([feature({ color: "red" })])),
+    ).toBe("invalid site feature color");
+    expect(
+      validateMissionCreate(
+        withFeatures([feature({ vertices: square.slice(0, 2) })]),
+      ),
+    ).toBe("a site feature needs 3 to 500 corners");
+    expect(
+      validateMissionCreate(
+        withFeatures([
+          feature({
+            vertices: [
+              [95, 0],
+              [0, 0],
+              [1, 1],
+            ],
+          }),
+        ]),
+      ),
+    ).toBe("site feature corner out of range");
+    expect(
+      validateMissionCreate(withFeatures([feature({ heightM: -2 })])),
+    ).toBe("invalid site feature height");
+    expect(
+      validateMissionCreate(withFeatures([feature({ isObstacle: "yes" })])),
+    ).toBe("invalid site feature obstacle setting");
+    expect(
+      validateMissionCreate(withFeatures([feature({ source: "osm" })])),
+    ).toBe("invalid site feature source");
+    expect(
+      validateMissionUpdate({ siteFeatures: [feature({ name: "" })] }),
+    ).toBe("invalid site feature name");
   });
 });

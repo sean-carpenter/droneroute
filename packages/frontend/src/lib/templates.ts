@@ -11,7 +11,7 @@ import { resolveGimbalAim, type GimbalStrategy } from "@/lib/geo";
 // ── Helpers ──────────────────────────────────────────────
 
 /** Move a lat/lng point by a distance (meters) and bearing (degrees, 0=N) */
-function destinationPoint(
+export function destinationPoint(
   lat: number,
   lng: number,
   distanceM: number,
@@ -40,7 +40,7 @@ function destinationPoint(
 }
 
 /** Bearing from point A to point B in degrees (0=N, 90=E) */
-function bearing(
+export function bearing(
   lat1: number,
   lng1: number,
   lat2: number,
@@ -237,6 +237,75 @@ export interface FacadeParams {
   aim: TemplateAim;
 }
 
+/** Which outline the facade tool is drawing. Wall is the original two-point scan. */
+export type FacadeBoundaryKind = "wall" | "circle" | "spiral" | "polygon";
+
+/**
+ * Photo spacing on a vertical face. Overlap is measured on the camera
+ * footprint at the target distance: horizontal is left-right (sensor width),
+ * vertical is up-down (sensor height).
+ */
+export interface FacadeSpacing {
+  mode: "overlap" | "distance";
+  /** 0 to 1. Used when mode is overlap. */
+  horizontalOverlap: number;
+  /** 0 to 1. Used when mode is overlap. */
+  verticalOverlap: number;
+  /** Meters between photos. Used when mode is distance. */
+  horizontalM: number;
+  verticalM: number;
+}
+
+export interface RadialFacadeParams {
+  boundary: "circle" | "spiral";
+  center: [number, number];
+  /** Point that sets the direction of the radius handles. */
+  handle: [number, number];
+  /** Structure radius at the bottom of the altitude range. */
+  radiusBottomM: number;
+  /** Structure radius at the top. Used only when tapered, and not for columns. */
+  radiusTopM: number;
+  tapered: boolean;
+  /** How far outside the structure the drone flies. */
+  standoffM: number;
+  minAltitude: number;
+  maxAltitude: number;
+  /** Circle only. A spiral always climbs. */
+  pattern: "horizontal" | "vertical";
+  spacing: FacadeSpacing;
+  clockwise: boolean;
+  createPoi: boolean;
+  aim: TemplateAim;
+  camera?: CameraModel;
+}
+
+interface PolygonFacadeParams {
+  boundary: "polygon";
+  /** Structure footprint, [lat, lng], at least 3 corners. */
+  vertices: [number, number][];
+  standoffM: number;
+  minAltitude: number;
+  maxAltitude: number;
+  pattern: "horizontal" | "vertical";
+  spacing: FacadeSpacing;
+  aim: TemplateAim;
+  camera?: CameraModel;
+}
+
+export type BoundaryFacadeParams = RadialFacadeParams | PolygonFacadeParams;
+
+export interface BoundaryFacadeResult extends TemplateResult {
+  /** Photos the spacing asked for, before the waypoint cap. */
+  plannedCount: number;
+  /** The outward offset of a polygon crosses itself. */
+  selfCrossing: boolean;
+  horizontalM: number;
+  verticalM: number;
+  /** Orbits, columns, or spiral turns. */
+  passes: number;
+  passLabel: "orbits" | "columns" | "turns";
+}
+
 export interface PencilParams {
   path: [number, number][]; // raw drawn points [lat, lng]
   numPoints: number; // target waypoint count
@@ -314,6 +383,39 @@ export const DEFAULT_FACADE_PARAMS: Omit<FacadeParams, "point1" | "point2"> = {
   numColumns: 8,
   addPhotos: true,
   // Wall base, as before
+  aim: { mode: "structureHeight", height: 0 },
+};
+
+export const DEFAULT_FACADE_SPACING: FacadeSpacing = {
+  mode: "overlap",
+  horizontalOverlap: 0.75,
+  verticalOverlap: 0.75,
+  horizontalM: 5,
+  verticalM: 4,
+};
+
+export const DEFAULT_RADIAL_FACADE: Omit<
+  RadialFacadeParams,
+  "boundary" | "center" | "handle" | "radiusBottomM" | "radiusTopM"
+> = {
+  tapered: false,
+  standoffM: 20,
+  minAltitude: 10,
+  maxAltitude: 40,
+  pattern: "horizontal",
+  spacing: DEFAULT_FACADE_SPACING,
+  clockwise: true,
+  createPoi: true,
+  aim: { mode: "structureHeight", height: 0 },
+};
+
+export const DEFAULT_POLYGON_FACADE: Omit<PolygonFacadeParams, "vertices"> = {
+  boundary: "polygon",
+  standoffM: 20,
+  minAltitude: 10,
+  maxAltitude: 40,
+  pattern: "horizontal",
+  spacing: DEFAULT_FACADE_SPACING,
   aim: { mode: "structureHeight", height: 0 },
 };
 
@@ -1088,6 +1190,656 @@ export function generateFacade(
   }
 
   return { waypoints, pois: [] };
+}
+
+// ── Circle, spiral and polygon facades ──────────────────
+
+type XY = [number, number];
+
+/** Place `origin` at `distanceM` along the ray through `toward`. */
+export function pointOnRay(
+  origin: [number, number],
+  toward: [number, number],
+  distanceM: number,
+): [number, number] {
+  return destinationPoint(
+    origin[0],
+    origin[1],
+    distanceM,
+    bearing(origin[0], origin[1], toward[0], toward[1]),
+  );
+}
+
+/**
+ * Horizontal and vertical gap between photos on a vertical face, in meters.
+ * At a level gimbal the sensor's long side runs left-right.
+ */
+export function facadePhotoSpacing(
+  standoffM: number,
+  spacing: FacadeSpacing,
+  camera: CameraModel = MAVIC_3E_CAMERA,
+): { horizontalM: number; verticalM: number } {
+  if (spacing.mode === "distance") {
+    return {
+      horizontalM: Math.max(0.5, spacing.horizontalM),
+      verticalM: Math.max(0.5, spacing.verticalM),
+    };
+  }
+  const clamp = (value: number) => Math.min(0.95, Math.max(0, value));
+  const distance = Math.max(1, standoffM);
+  const horizontalCoverage =
+    (distance * camera.sensorWidthMm) / camera.focalLengthMm;
+  const verticalCoverage =
+    (distance * camera.sensorHeightMm) / camera.focalLengthMm;
+  return {
+    horizontalM: Math.max(
+      0.5,
+      horizontalCoverage * (1 - clamp(spacing.horizontalOverlap)),
+    ),
+    verticalM: Math.max(
+      0.5,
+      verticalCoverage * (1 - clamp(spacing.verticalOverlap)),
+    ),
+  };
+}
+
+function roundTenth(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+/** Altitudes from bottom to top, both ends included. */
+function altitudeLevels(
+  minAltitude: number,
+  maxAltitude: number,
+  verticalM: number,
+): number[] {
+  const min = Math.min(minAltitude, maxAltitude);
+  const max = Math.max(minAltitude, maxAltitude);
+  const span = max - min;
+  if (span < 0.5 || !(verticalM > 0)) return [roundTenth(min)];
+  const intervals = Math.max(1, Math.round(span / verticalM));
+  const levels: number[] = [];
+  for (let i = 0; i <= intervals; i++) {
+    levels.push(roundTenth(min + (i / intervals) * span));
+  }
+  return levels;
+}
+
+function addXY(a: XY, b: XY): XY {
+  return [a[0] + b[0], a[1] + b[1]];
+}
+
+function subXY(a: XY, b: XY): XY {
+  return [a[0] - b[0], a[1] - b[1]];
+}
+
+function mulXY(a: XY, scale: number): XY {
+  return [a[0] * scale, a[1] * scale];
+}
+
+function lenXY(a: XY): number {
+  return Math.hypot(a[0], a[1]);
+}
+
+function dotXY(a: XY, b: XY): number {
+  return a[0] * b[0] + a[1] * b[1];
+}
+
+function unitXY(a: XY): XY {
+  const length = lenXY(a);
+  if (length < 1e-9) return [0, 0];
+  return [a[0] / length, a[1] / length];
+}
+
+/** Right-hand normal of a unit direction. Outward for a counter-clockwise ring. */
+function rightNormal(direction: XY): XY {
+  return [direction[1], -direction[0]];
+}
+
+function signedArea(points: XY[]): number {
+  let area = 0;
+  for (let i = 0; i < points.length; i++) {
+    const next = points[(i + 1) % points.length];
+    area += points[i][0] * next[1] - next[0] * points[i][1];
+  }
+  return area / 2;
+}
+
+function dedupeMeters(points: XY[], minimumM = 0.2): XY[] {
+  const out: XY[] = [];
+  for (const point of points) {
+    if (
+      out.length === 0 ||
+      lenXY(subXY(point, out[out.length - 1])) > minimumM
+    ) {
+      out.push(point);
+    }
+  }
+  if (out.length > 1 && lenXY(subXY(out[0], out[out.length - 1])) <= minimumM) {
+    out.pop();
+  }
+  return out;
+}
+
+function dedupeGeographic(points: [number, number][]): [number, number][] {
+  const out: [number, number][] = [];
+  for (const point of points) {
+    if (
+      out.length === 0 ||
+      haversine(
+        point[0],
+        point[1],
+        out[out.length - 1][0],
+        out[out.length - 1][1],
+      ) > 0.2
+    ) {
+      out.push(point);
+    }
+  }
+  if (
+    out.length > 1 &&
+    haversine(
+      out[0][0],
+      out[0][1],
+      out[out.length - 1][0],
+      out[out.length - 1][1],
+    ) <= 0.2
+  ) {
+    out.pop();
+  }
+  return out;
+}
+
+function intersectLines(
+  origin: XY,
+  direction: XY,
+  other: XY,
+  otherDirection: XY,
+): XY | null {
+  const det =
+    direction[0] * otherDirection[1] - direction[1] * otherDirection[0];
+  if (Math.abs(det) < 1e-9) return null;
+  const delta = subXY(other, origin);
+  const t = (delta[0] * otherDirection[1] - delta[1] * otherDirection[0]) / det;
+  return addXY(origin, mulXY(direction, t));
+}
+
+function segmentsCross(a1: XY, a2: XY, b1: XY, b2: XY): boolean {
+  const orient = (p: XY, q: XY, r: XY) =>
+    (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  return (
+    orient(a1, a2, b1) * orient(a1, a2, b2) < 0 &&
+    orient(b1, b2, a1) * orient(b1, b2, a2) < 0
+  );
+}
+
+function ringSelfIntersects(points: XY[]): boolean {
+  const count = points.length;
+  if (count < 4) return false;
+  for (let i = 0; i < count; i++) {
+    for (let j = i + 1; j < count; j++) {
+      const gap = Math.min(Math.abs(i - j), count - Math.abs(i - j));
+      if (gap <= 1) continue;
+      if (
+        segmentsCross(
+          points[i],
+          points[(i + 1) % count],
+          points[j],
+          points[(j + 1) % count],
+        )
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export interface OffsetPolygon {
+  /** Corners of the outward path, without a repeated closing point. */
+  ring: [number, number][];
+  selfCrossing: boolean;
+}
+
+/**
+ * Push every edge of a footprint outward by `distanceM`. Sharp convex
+ * corners are beveled so the miter cannot run away.
+ */
+export function offsetPolygon(
+  vertices: [number, number][],
+  distanceM: number,
+): OffsetPolygon {
+  const geographic = dedupeGeographic(vertices);
+  if (geographic.length < 3 || !(distanceM > 0)) {
+    return { ring: geographic, selfCrossing: false };
+  }
+  const origin = geographic[0];
+  let local = dedupeMeters(toLocal(geographic, origin));
+  if (local.length < 3) return { ring: geographic, selfCrossing: false };
+  if (signedArea(local) < 0) local = [...local].reverse();
+
+  const count = local.length;
+  const directions: XY[] = [];
+  const normals: XY[] = [];
+  for (let i = 0; i < count; i++) {
+    const direction = unitXY(subXY(local[(i + 1) % count], local[i]));
+    directions.push(direction);
+    normals.push(rightNormal(direction));
+  }
+
+  const miterLimit = 2;
+  const offset: XY[] = [];
+  for (let i = 0; i < count; i++) {
+    const previous = (i - 1 + count) % count;
+    const vertex = local[i];
+    const start = addXY(vertex, mulXY(normals[previous], distanceM));
+    const end = addXY(vertex, mulXY(normals[i], distanceM));
+    const hit = intersectLines(start, directions[previous], end, directions[i]);
+    if (!hit || lenXY(subXY(hit, vertex)) > miterLimit * distanceM) {
+      offset.push(start, end);
+    } else {
+      offset.push(hit);
+    }
+  }
+
+  const cleaned = dedupeMeters(offset);
+  // A notch narrower than the target distance comes back on top of the
+  // building. Those points sit closer than the standoff, which is the cue
+  // to warn even when the ring does not literally cross itself.
+  const collapsed = cleaned.some((point) => {
+    let nearest = Infinity;
+    for (let i = 0; i < local.length; i++) {
+      const projected = projectSegment(
+        point,
+        local[i],
+        local[(i + 1) % local.length],
+      );
+      nearest = Math.min(nearest, lenXY(subXY(point, projected)));
+    }
+    return nearest < distanceM - 0.05;
+  });
+  return {
+    ring: fromLocal(cleaned, origin),
+    selfCrossing: ringSelfIntersects(cleaned) || collapsed,
+  };
+}
+
+function projectSegment(point: XY, start: XY, end: XY): XY {
+  const edge = subXY(end, start);
+  const length2 = dotXY(edge, edge);
+  if (length2 < 1e-9) return start;
+  const t = Math.max(
+    0,
+    Math.min(1, dotXY(subXY(point, start), edge) / length2),
+  );
+  return addXY(start, mulXY(edge, t));
+}
+
+function nearestOnRing(point: XY, ring: XY[]): XY {
+  let best = ring[0];
+  let bestDistance = Infinity;
+  for (let i = 0; i < ring.length; i++) {
+    const projected = projectSegment(
+      point,
+      ring[i],
+      ring[(i + 1) % ring.length],
+    );
+    const distance = lenXY(subXY(point, projected));
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = projected;
+    }
+  }
+  return best;
+}
+
+/** Points around a closed ring, keeping every corner and filling edges. */
+function sampleClosedRing(
+  ring: [number, number][],
+  spacingM: number,
+): [number, number][] {
+  if (ring.length < 3) return [...ring];
+  const out: [number, number][] = [];
+  for (let i = 0; i < ring.length; i++) {
+    const start = ring[i];
+    const end = ring[(i + 1) % ring.length];
+    out.push(start);
+    const edgeLength = haversine(start[0], start[1], end[0], end[1]);
+    const steps = Math.max(1, Math.round(edgeLength / Math.max(spacingM, 0.5)));
+    for (let step = 1; step < steps; step++) {
+      const t = step / steps;
+      out.push([
+        start[0] + t * (end[0] - start[0]),
+        start[1] + t * (end[1] - start[1]),
+      ]);
+    }
+  }
+  return out;
+}
+
+interface FacadeShot {
+  latitude: number;
+  longitude: number;
+  height: number;
+  anchorLat: number;
+  anchorLng: number;
+}
+
+function facadeShotWaypoint(
+  shot: FacadeShot,
+  aim: TemplateAim,
+  pois: TemplatePoi[],
+): TemplateResult["waypoints"][number] {
+  return {
+    ...DEFAULT_WAYPOINT,
+    latitude: shot.latitude,
+    longitude: shot.longitude,
+    height: shot.height,
+    speed: 3,
+    useGlobalSpeed: false,
+    useGlobalHeadingParam: false,
+    headingMode: "fixed",
+    headingAngle: normalizeHeading(
+      bearing(shot.latitude, shot.longitude, shot.anchorLat, shot.anchorLng),
+    ),
+    turnMode: "toPointAndStopWithContinuityCurvature",
+    useGlobalTurnParam: false,
+    actions: [{ ...TAKE_PHOTO }],
+    ...aimFields(
+      {
+        latitude: shot.latitude,
+        longitude: shot.longitude,
+        height: shot.height,
+      },
+      aim,
+      {
+        latitude: shot.anchorLat,
+        longitude: shot.anchorLng,
+        surfacePitchDeg: 0,
+      },
+      pois,
+      0,
+    ),
+  };
+}
+
+function radialFlightPoint(
+  center: [number, number],
+  radiusM: number,
+  angleDeg: number,
+  clockwise: boolean,
+): [number, number] {
+  return destinationPoint(
+    center[0],
+    center[1],
+    radiusM,
+    clockwise ? angleDeg : -angleDeg,
+  );
+}
+
+function emptyBoundary(
+  gaps: { horizontalM: number; verticalM: number },
+  passLabel: BoundaryFacadeResult["passLabel"],
+  selfCrossing = false,
+): BoundaryFacadeResult {
+  return {
+    waypoints: [],
+    pois: [],
+    plannedCount: 0,
+    selfCrossing,
+    horizontalM: gaps.horizontalM,
+    verticalM: gaps.verticalM,
+    passes: 0,
+    passLabel,
+  };
+}
+
+function finishBoundary(
+  shots: FacadeShot[],
+  aim: TemplateAim,
+  pois: TemplatePoi[],
+  extraPois: TemplateResult["pois"],
+  gaps: { horizontalM: number; verticalM: number },
+  passes: number,
+  passLabel: BoundaryFacadeResult["passLabel"],
+  selfCrossing: boolean,
+): BoundaryFacadeResult {
+  return {
+    waypoints: shots
+      .slice(0, MAX_SURVEY_WAYPOINTS)
+      .map((shot) => facadeShotWaypoint(shot, aim, pois)),
+    pois: extraPois,
+    plannedCount: shots.length,
+    selfCrossing,
+    horizontalM: gaps.horizontalM,
+    verticalM: gaps.verticalM,
+    passes,
+    passLabel,
+  };
+}
+
+/**
+ * Map a round structure or a building footprint. The drawn shape is the
+ * structure. The drone flies `standoffM` outside it and stops for each photo.
+ */
+export function generateBoundaryFacade(
+  params: BoundaryFacadeParams,
+  availablePois: TemplatePoi[] = [],
+): BoundaryFacadeResult {
+  const camera = params.camera ?? MAVIC_3E_CAMERA;
+  const gaps = facadePhotoSpacing(params.standoffM, params.spacing, camera);
+  const standoff = Math.max(1, params.standoffM);
+  if (params.boundary === "polygon") {
+    return generatePolygonFacade(params, gaps, standoff, availablePois);
+  }
+  return generateRadialFacade(params, gaps, standoff, availablePois);
+}
+
+function generateRadialFacade(
+  params: RadialFacadeParams,
+  gaps: { horizontalM: number; verticalM: number },
+  standoff: number,
+  availablePois: TemplatePoi[],
+): BoundaryFacadeResult {
+  const minAltitude = Math.min(params.minAltitude, params.maxAltitude);
+  const maxAltitude = Math.max(params.minAltitude, params.maxAltitude);
+  const applyTaper =
+    params.tapered &&
+    (params.boundary === "spiral" || params.pattern === "horizontal");
+  const radiusBottom = Math.max(0, params.radiusBottomM);
+  const radiusTop = Math.max(0, applyTaper ? params.radiusTopM : radiusBottom);
+  const flightRadius = (t: number) =>
+    Math.max(1, radiusBottom + t * (radiusTop - radiusBottom) + standoff);
+
+  const shots: FacadeShot[] = [];
+  const anchor = { anchorLat: params.center[0], anchorLng: params.center[1] };
+  let passes = 1;
+  let passLabel: BoundaryFacadeResult["passLabel"] = "orbits";
+
+  if (params.boundary === "spiral") {
+    passLabel = "turns";
+    const span = maxAltitude - minAltitude;
+    const turns = span > 0.5 ? span / gaps.verticalM : 0;
+    passes = turns > 0 ? Math.round(turns * 10) / 10 : 1;
+    if (turns === 0) {
+      const radius = flightRadius(0);
+      const count = Math.max(
+        4,
+        Math.round((2 * Math.PI * radius) / gaps.horizontalM),
+      );
+      for (let i = 0; i < count; i++) {
+        const [latitude, longitude] = radialFlightPoint(
+          params.center,
+          radius,
+          (i / count) * 360,
+          params.clockwise,
+        );
+        shots.push({
+          latitude,
+          longitude,
+          height: roundTenth(minAltitude),
+          ...anchor,
+        });
+      }
+    } else {
+      const thetaEnd = turns * 2 * Math.PI;
+      let theta = 0;
+      while (theta < thetaEnd - 1e-6) {
+        const t = theta / thetaEnd;
+        const radius = flightRadius(t);
+        const [latitude, longitude] = radialFlightPoint(
+          params.center,
+          radius,
+          (theta * 180) / Math.PI,
+          params.clockwise,
+        );
+        shots.push({
+          latitude,
+          longitude,
+          height: roundTenth(minAltitude + t * span),
+          ...anchor,
+        });
+        theta += gaps.horizontalM / radius;
+      }
+      const [latitude, longitude] = radialFlightPoint(
+        params.center,
+        flightRadius(1),
+        (thetaEnd * 180) / Math.PI,
+        params.clockwise,
+      );
+      shots.push({
+        latitude,
+        longitude,
+        height: roundTenth(maxAltitude),
+        ...anchor,
+      });
+    }
+  } else if (params.pattern === "vertical") {
+    passLabel = "columns";
+    const radius = flightRadius(0);
+    const columns = Math.max(
+      4,
+      Math.round((2 * Math.PI * radius) / gaps.horizontalM),
+    );
+    passes = columns;
+    const levels = altitudeLevels(minAltitude, maxAltitude, gaps.verticalM);
+    for (let column = 0; column < columns; column++) {
+      const [latitude, longitude] = radialFlightPoint(
+        params.center,
+        radius,
+        (column / columns) * 360,
+        params.clockwise,
+      );
+      const heights = column % 2 === 0 ? levels : [...levels].reverse();
+      for (const height of heights) {
+        shots.push({ latitude, longitude, height, ...anchor });
+      }
+    }
+  } else {
+    const levels = altitudeLevels(minAltitude, maxAltitude, gaps.verticalM);
+    passes = levels.length;
+    let startAngle = 0;
+    for (let level = 0; level < levels.length; level++) {
+      const t = levels.length === 1 ? 0 : level / (levels.length - 1);
+      const radius = flightRadius(t);
+      const count = Math.max(
+        4,
+        Math.round((2 * Math.PI * radius) / gaps.horizontalM),
+      );
+      const reverse = level % 2 === 1;
+      let lastAngle = startAngle;
+      for (let i = 0; i < count; i++) {
+        const angle = reverse
+          ? startAngle - (i / count) * 360
+          : startAngle + (i / count) * 360;
+        const [latitude, longitude] = radialFlightPoint(
+          params.center,
+          radius,
+          angle,
+          params.clockwise,
+        );
+        shots.push({ latitude, longitude, height: levels[level], ...anchor });
+        lastAngle = angle;
+      }
+      startAngle = lastAngle;
+    }
+  }
+
+  return finishBoundary(
+    shots,
+    params.aim,
+    availablePois,
+    params.createPoi
+      ? [centerPoi("Facade center", params.center, params.aim)]
+      : [],
+    gaps,
+    passes,
+    passLabel,
+    false,
+  );
+}
+
+function generatePolygonFacade(
+  params: PolygonFacadeParams,
+  gaps: { horizontalM: number; verticalM: number },
+  standoff: number,
+  availablePois: TemplatePoi[],
+): BoundaryFacadeResult {
+  const passLabel: BoundaryFacadeResult["passLabel"] =
+    params.pattern === "vertical" ? "columns" : "orbits";
+  const geographic = dedupeGeographic(params.vertices);
+  if (geographic.length < 3) return emptyBoundary(gaps, passLabel);
+
+  const offset = offsetPolygon(geographic, standoff);
+  if (offset.ring.length < 3) {
+    return emptyBoundary(gaps, passLabel, offset.selfCrossing);
+  }
+
+  const origin = geographic[0];
+  const structure = toLocal(geographic, origin);
+  const stations = sampleClosedRing(offset.ring, gaps.horizontalM).map(
+    ([latitude, longitude]) => {
+      const [localPoint] = toLocal([[latitude, longitude]], origin);
+      const nearest = nearestOnRing(localPoint, structure);
+      const [anchorLat, anchorLng] = fromLocal([nearest], origin)[0];
+      return { latitude, longitude, anchorLat, anchorLng };
+    },
+  );
+  if (stations.length === 0)
+    return emptyBoundary(gaps, passLabel, offset.selfCrossing);
+
+  const levels = altitudeLevels(
+    params.minAltitude,
+    params.maxAltitude,
+    gaps.verticalM,
+  );
+  const shots: FacadeShot[] = [];
+  if (params.pattern === "vertical") {
+    stations.forEach((station, index) => {
+      const heights = index % 2 === 0 ? levels : [...levels].reverse();
+      for (const height of heights) {
+        shots.push({ ...station, height });
+      }
+    });
+  } else {
+    levels.forEach((height, level) => {
+      const pass = level % 2 === 0 ? stations : [...stations].reverse();
+      for (const station of pass) {
+        shots.push({ ...station, height });
+      }
+    });
+  }
+
+  return finishBoundary(
+    shots,
+    params.aim,
+    availablePois,
+    [],
+    gaps,
+    params.pattern === "vertical" ? stations.length : levels.length,
+    passLabel,
+    offset.selfCrossing,
+  );
 }
 
 // ── Pencil (freehand path) ──────────────────────────────

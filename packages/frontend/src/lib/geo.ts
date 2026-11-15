@@ -2,6 +2,7 @@ import type {
   Waypoint,
   PointOfInterest,
   Obstacle,
+  SiteFeature,
   UnitSystem,
 } from "@droneroute/shared";
 import { formatArea as formatAreaUnit } from "@/lib/units";
@@ -234,23 +235,57 @@ export interface ObstacleWarning {
   obstacleId: string;
   obstacleName: string;
   waypointIndex: number;
-  type: "crosses" | "inside";
+  /**
+   * "inside" and "crosses" are conflicts. "passesOver" is information: the
+   * route is above the obstacle's height with the clearance margin to spare.
+   */
+  type: "crosses" | "inside" | "passesOver";
+}
+
+/** How far above an obstacle's height the route must be to count as clear. */
+export const OBSTACLE_CLEARANCE_M = 5;
+
+/** True for warnings that mean the route runs into an obstacle. */
+export function isObstacleConflict(warning: ObstacleWarning): boolean {
+  return warning.type !== "passesOver";
 }
 
 /**
  * Check all waypoints and flight path segments against all obstacles.
- * Returns a list of warnings for any conflicts found.
+ * Returns a list of warnings for any conflicts found, and "passesOver" entries
+ * where the route is above an obstacle that has a height.
+ *
+ * Obstacle heights are above ground. Pass `compareHeights: false` when
+ * waypoint heights are not (absolute EGM96 altitudes), so that nothing is
+ * cleared on numbers that cannot be compared.
  */
 export function getObstacleWarnings(
-  waypoints: { latitude: number; longitude: number; index: number }[],
+  waypoints: {
+    latitude: number;
+    longitude: number;
+    index: number;
+    height?: number;
+  }[],
   obstacles: Obstacle[],
+  options: { compareHeights?: boolean } = {},
 ): ObstacleWarning[] {
   if (obstacles.length === 0 || waypoints.length === 0) return [];
 
+  const compareHeights = options.compareHeights ?? true;
   const warnings: ObstacleWarning[] = [];
 
   for (const obstacle of obstacles) {
     if (obstacle.vertices.length < 3) continue;
+
+    const clearAbove =
+      compareHeights &&
+      typeof obstacle.height === "number" &&
+      Number.isFinite(obstacle.height)
+        ? obstacle.height + OBSTACLE_CLEARANCE_M
+        : null;
+    const clears = (...heights: (number | undefined)[]) =>
+      clearAbove !== null &&
+      heights.every((h) => typeof h === "number" && h >= clearAbove);
 
     // Check waypoints inside polygon
     for (const wp of waypoints) {
@@ -259,7 +294,7 @@ export function getObstacleWarnings(
           obstacleId: obstacle.id,
           obstacleName: obstacle.name,
           waypointIndex: wp.index,
-          type: "inside",
+          type: clears(wp.height) ? "passesOver" : "inside",
         });
       }
     }
@@ -276,7 +311,8 @@ export function getObstacleWarnings(
           obstacleId: obstacle.id,
           obstacleName: obstacle.name,
           waypointIndex: wp1.index,
-          type: "crosses",
+          // Height changes evenly along a leg, so its lowest point is an end.
+          type: clears(wp1.height, wp2.height) ? "passesOver" : "crosses",
         });
       }
     }
@@ -423,4 +459,20 @@ export function getAirspaceWarnings(
   }
 
   return Array.from(warnings.values());
+}
+
+/**
+ * Site features marked "treat as obstacle", in the shape the obstacle checks
+ * take, so buildings get the same warnings as drawn obstacles.
+ */
+export function siteFeaturesAsObstacles(features: SiteFeature[]): Obstacle[] {
+  return features
+    .filter((f) => f.isObstacle && f.vertices.length >= 3)
+    .map((f) => ({
+      id: f.id,
+      name: f.name,
+      description: "",
+      vertices: f.vertices,
+      height: f.heightM ?? null,
+    }));
 }

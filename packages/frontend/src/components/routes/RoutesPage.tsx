@@ -1,3 +1,4 @@
+import { kmzFileName } from "@droneroute/shared";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import {
@@ -10,6 +11,7 @@ import {
   Route,
   ArrowUp,
   Plane,
+  Home,
   Download,
   Share2,
   Link,
@@ -22,6 +24,7 @@ import { useAuthStore } from "@/store/authStore";
 import { useConfigStore } from "@/store/configStore";
 import { usePreferencesStore } from "@/store/preferencesStore";
 import { formatDistance } from "@/lib/units";
+import { homeLabel } from "@/lib/home";
 import { api } from "@/lib/api";
 import { DRONE_MODELS } from "@droneroute/shared";
 import type {
@@ -39,6 +42,7 @@ interface SavedMission {
   waypoints: string;
   pois: string;
   obstacles: string;
+  site_features?: string;
   share_token: string | null;
 }
 
@@ -110,8 +114,18 @@ interface RoutesPageProps {
 
 export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
   const { loadMission, setCurrentPage } = useMissionStore();
+  // The mission currently open in the editor, if any
+  const openMissionId = useMissionStore((s) => s.missionId);
+  const hasOpenMission = useMissionStore(
+    (s) =>
+      s.missionId !== null ||
+      s.dirty ||
+      s.waypoints.length > 0 ||
+      s.pois.length > 0 ||
+      s.obstacles.length > 0,
+  );
   const { token } = useAuthStore();
-  const { selfHosted } = useConfigStore();
+  const { selfHosted, singleUser } = useConfigStore();
   const unitSystem = usePreferencesStore((s) => s.preferences.unitSystem);
   const [missions, setMissions] = useState<SavedMission[]>([]);
   const [loading, setLoading] = useState(true);
@@ -133,17 +147,42 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
   useEffect(() => {
     if (token) {
       fetchMissions();
-    } else {
+    } else if (!singleUser) {
+      // A single-user instance is still opening its local workspace: keep
+      // the spinner until the session arrives instead of asking to sign in.
       setLoading(false);
     }
-  }, [token]);
+  }, [token, singleUser]);
+
+  /** Ask before replacing unsaved work in the editor. */
+  const confirmDiscard = () => {
+    const { dirty, waypoints, pois, obstacles } = useMissionStore.getState();
+    const hasContent =
+      waypoints.length > 0 || pois.length > 0 || obstacles.length > 0;
+    return (
+      !dirty ||
+      !hasContent ||
+      confirm(
+        "The mission open in the editor has unsaved changes. Discard them?",
+      )
+    );
+  };
 
   const handleLoad = async (mission: SavedMission) => {
+    // Already open: go back to it as it is, unsaved edits included
+    if (mission.id === openMissionId) {
+      setCurrentPage("editor");
+      return;
+    }
+    if (!confirmDiscard()) return;
     try {
       const waypoints = JSON.parse(mission.waypoints);
       const config = JSON.parse(mission.config);
       const pois = mission.pois ? JSON.parse(mission.pois) : [];
       const obstacles = mission.obstacles ? JSON.parse(mission.obstacles) : [];
+      const siteFeatures = mission.site_features
+        ? JSON.parse(mission.site_features)
+        : [];
       loadMission({
         id: mission.id,
         name: mission.name,
@@ -151,18 +190,22 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
         waypoints,
         pois,
         obstacles,
+        siteFeatures,
       });
       setCurrentPage("editor");
     } catch (e) {
       console.error("Failed to load mission:", e);
+      toast.error("This mission could not be opened");
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Delete this route permanently?")) return;
+    if (!confirm("Delete this mission permanently?")) return;
     try {
       await api.delete(`/missions/${id}`);
       setMissions((prev) => prev.filter((m) => m.id !== id));
+      // Don't leave a deleted mission open: saving it again would fail
+      if (id === openMissionId) useMissionStore.getState().clearMission();
     } catch (e: any) {
       toast.error("Failed to delete: " + (e.message || "Unknown error"));
     }
@@ -242,7 +285,7 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${(mission.name || "mission").replace(/[^a-zA-Z0-9_-]/g, "_")}.kmz`;
+      a.download = kmzFileName(mission.name || "mission");
       a.click();
       URL.revokeObjectURL(url);
     } catch (err: any) {
@@ -253,6 +296,7 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
   };
 
   const handleNewRoute = () => {
+    if (!confirmDiscard()) return;
     useMissionStore.getState().clearMission();
     setCurrentPage("editor");
   };
@@ -280,28 +324,31 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
         <div className="border-b border-border bg-card px-6 py-4">
           <div className="flex items-center justify-between max-w-5xl mx-auto">
             <div className="flex items-center gap-3">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setCurrentPage("editor")}
-                className="h-9 w-9"
-              >
-                <ArrowLeft className="h-5 w-5" />
-              </Button>
+              {hasOpenMission && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setCurrentPage("editor")}
+                  className="h-9 w-9"
+                  title="Back to the open mission"
+                >
+                  <ArrowLeft className="h-5 w-5" />
+                </Button>
+              )}
               <div>
                 <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
                   <Route className="h-5 w-5 text-primary" />
-                  My routes
+                  Saved missions
                 </h1>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {missions.length} saved route
+                  {missions.length} saved mission
                   {missions.length !== 1 ? "s" : ""}
                 </p>
               </div>
             </div>
             <Button onClick={handleNewRoute} size="sm" className="gap-1.5">
               <Plus className="h-4 w-4" />
-              New route
+              New mission
             </Button>
           </div>
         </div>
@@ -313,16 +360,16 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
               <div className="flex items-center justify-center py-20 text-muted-foreground">
                 <div className="text-center">
                   <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-3" />
-                  <p className="text-sm">Loading routes...</p>
+                  <p className="text-sm">Loading missions...</p>
                 </div>
               </div>
             )}
 
-            {!loading && !token && (
+            {!loading && !token && !singleUser && (
               <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
                 <Route className="h-12 w-12 mb-4 opacity-30" />
                 <p className="text-lg font-medium mb-1">
-                  Sign in to view your routes
+                  Sign in to view your missions
                 </p>
                 <p className="text-sm mb-4">
                   Create an account to save and manage drone missions
@@ -345,13 +392,15 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
             {!loading && !error && token && missions.length === 0 && (
               <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
                 <Route className="h-12 w-12 mb-4 opacity-30" />
-                <p className="text-lg font-medium mb-1">No saved routes yet</p>
+                <p className="text-lg font-medium mb-1">
+                  No saved missions yet
+                </p>
                 <p className="text-sm mb-4">
                   Create your first drone waypoint mission
                 </p>
                 <Button onClick={handleNewRoute} size="sm" className="gap-1.5">
                   <Plus className="h-4 w-4" />
-                  Create route
+                  New mission
                 </Button>
               </div>
             )}
@@ -400,7 +449,7 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
                       <div className="p-4">
                         <div className="flex items-start justify-between mb-3">
                           <h3 className="text-sm font-semibold text-foreground truncate flex-1 mr-2 group-hover:text-primary transition-colors">
-                            {mission.name || "Untitled route"}
+                            {mission.name || "Untitled mission"}
                           </h3>
                           <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                             {!selfHosted && (
@@ -414,7 +463,7 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
                                     ? copiedId === mission.id
                                       ? "Link copied!"
                                       : "Copy share link"
-                                    : "Share route"
+                                    : "Share mission"
                                 }
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -461,7 +510,7 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
                               variant="ghost"
                               size="icon"
                               className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                              title="Delete route"
+                              title="Delete mission"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleDelete(mission.id);
@@ -474,6 +523,11 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
 
                         {/* Drone model + shared badge */}
                         <div className="flex items-center gap-2 mb-2">
+                          {mission.id === openMissionId && (
+                            <div className="text-[11px] text-primary">
+                              Open in editor
+                            </div>
+                          )}
                           {droneLabel && (
                             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                               <Plane className="h-3 w-3 text-purple-400" />
@@ -487,6 +541,18 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
                             </div>
                           )}
                         </div>
+
+                        {config?.home && (
+                          <div
+                            className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-2 min-w-0"
+                            title={homeLabel(config.home)}
+                          >
+                            <Home className="h-3 w-3 shrink-0 text-emerald-400" />
+                            <span className="truncate">
+                              {homeLabel(config.home)}
+                            </span>
+                          </div>
+                        )}
 
                         {/* Stats row */}
                         <div className="flex items-center gap-3 text-[11px] text-muted-foreground mb-2">

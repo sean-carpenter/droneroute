@@ -2,8 +2,11 @@ import { Router } from "express";
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
 import type { Mission } from "@droneroute/shared";
-import { DEFAULT_MISSION_CONFIG } from "@droneroute/shared";
-import { generateKmzBuffer } from "../services/kmzGenerator.js";
+import { DEFAULT_MISSION_CONFIG, kmzFileName } from "@droneroute/shared";
+import {
+  generateKmzBuffer,
+  layoutForTarget,
+} from "../services/kmzGenerator.js";
 import { ImportError, importMissionFile } from "../services/missionImport.js";
 import { getDb } from "../models/db.js";
 import {
@@ -28,7 +31,7 @@ kmzRoutes.post(
   optionalAuth,
   async (req: AuthRequest, res) => {
     try {
-      const { name, config, waypoints, pois } = req.body;
+      const { name, config, waypoints, pois, target } = req.body;
       if (!config || !waypoints || waypoints.length < 2) {
         res
           .status(400)
@@ -39,6 +42,14 @@ kmzRoutes.post(
       const geometryError = validateMissionGeometry({ waypoints, pois });
       if (geometryError) {
         res.status(400).json({ error: geometryError });
+        return;
+      }
+
+      if (target === "flighthub2" && config.heightMode === "EGM96") {
+        res.status(400).json({
+          error:
+            "FlightHub 2 needs heights above ground or relative to the takeoff point. Change the height mode in mission settings",
+        });
         return;
       }
 
@@ -53,9 +64,9 @@ kmzRoutes.post(
         obstacles: [],
       };
 
-      const buffer = await generateKmzBuffer(mission);
+      const buffer = await generateKmzBuffer(mission, layoutForTarget(target));
 
-      const filename = `${mission.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.kmz`;
+      const filename = kmzFileName(mission.name);
       res.setHeader("Content-Type", "application/vnd.google-earth.kmz");
       res.setHeader(
         "Content-Disposition",
@@ -96,8 +107,11 @@ kmzRoutes.get(
         obstacles: JSON.parse(row.obstacles || "[]"),
       };
 
-      const buffer = await generateKmzBuffer(mission);
-      const filename = `${mission.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.kmz`;
+      const buffer = await generateKmzBuffer(
+        mission,
+        layoutForTarget(req.query.target),
+      );
+      const filename = kmzFileName(mission.name);
       res.setHeader("Content-Type", "application/vnd.google-earth.kmz");
       res.setHeader(
         "Content-Disposition",

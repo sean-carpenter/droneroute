@@ -282,6 +282,17 @@ The waypoints are placed at equal arc-length intervals along the drawn path usin
 
 ## Mission Configuration
 
+### Mission home
+
+Under the mission name there is a **Mission home** box. Type an address or coordinates as `lat, lng` (for example `38.5816, -121.4944`) and press Enter. If an address has several matches, pick one from the list.
+
+- The home appears on the map as a green house marker and the map centers on it
+- Drag the marker to fine-tune the position — the address stays as its label
+- Use the buttons next to it to center the map on it, change it or remove it
+- A mission with a home and no route yet opens centered on the home, and the saved missions list shows each mission's home
+
+The home is a planning aid only. It is not written to the KMZ and does not set the drone's take-off or return point.
+
 Open the **Mission config** section in the sidebar to configure global mission parameters.
 
 | Setting              | Description                                                                                       |
@@ -409,10 +420,10 @@ This is useful for editing missions created in DJI Pilot 2 or other planning too
 
 ## Saving Missions
 
-Sign in with an email and password to save missions to the server. Your saved missions are accessible from the **My routes** button (folder icon in the header).
+Sign in with an email and password to save missions to the server. Once you can save, the app opens on the **Saved missions** list; from the editor, the folder icon in the header takes you back to it.
 
-- **Save** — saves the current mission (creates a new one or updates an existing one)
-- **My Routes** — lists all your saved missions, click to load one
+- **Save** — saves the current mission under the name in the box at the top of the sidebar (creates a new one or updates an existing one) and confirms with a message
+- **Saved missions** — lists all your saved missions; click one to open it in the editor, or click **New mission** to start an empty one
 
 Missions are stored in a SQLite database on the server. If you're self-hosting, the database persists in a Docker volume.
 
@@ -424,7 +435,7 @@ Share any saved mission with a read-only link. Recipients don't need an account 
 
 ### How to Share
 
-1. Open **My routes** (folder icon in the header)
+1. Open **Saved missions** (folder icon in the header)
 2. Click the **share** button on a mission card
 3. A unique link is generated and copied to your clipboard
 4. Send the link to anyone — they can open it in any browser
@@ -443,7 +454,7 @@ When someone opens a share link, they see a read-only summary page with:
 
 ### Revoking a Share
 
-To stop sharing a mission, open **My routes** and click the **unshare** button (the link-off icon) on the shared card. The link becomes invalid immediately — anyone with the old URL will see a "route not found" message.
+To stop sharing a mission, open **Saved missions** and click the **unshare** button (the link-off icon) on the shared card. The link becomes invalid immediately — anyone with the old URL will see a "route not found" message.
 
 ---
 

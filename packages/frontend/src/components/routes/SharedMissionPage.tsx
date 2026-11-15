@@ -1,3 +1,4 @@
+import { kmzFileName } from "@droneroute/shared";
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { formatDistance } from "@/lib/units";
@@ -27,6 +28,7 @@ import type {
   MissionConfig,
   PointOfInterest,
   Obstacle,
+  SiteFeature,
 } from "@droneroute/shared";
 
 interface SharedMissionData {
@@ -40,6 +42,7 @@ interface SharedMissionData {
   waypoints: Waypoint[];
   pois: PointOfInterest[];
   obstacles: Obstacle[];
+  siteFeatures?: SiteFeature[];
 }
 
 function haversine(
@@ -114,15 +117,17 @@ function SharedMissionMap({
   waypoints,
   pois,
   obstacles,
+  compareHeights,
 }: {
+  compareHeights: boolean;
   waypoints: Waypoint[];
   pois: PointOfInterest[];
   obstacles: Obstacle[];
 }) {
   const mapboxToken = useConfigStore((s) => s.mapboxToken);
   const warnings = useMemo(
-    () => getObstacleWarnings(waypoints, obstacles),
-    [waypoints, obstacles],
+    () => getObstacleWarnings(waypoints, obstacles, { compareHeights }),
+    [waypoints, obstacles, compareHeights],
   );
   const warningSegments = useMemo(() => {
     const set = new Set<number>();
@@ -348,6 +353,7 @@ export function SharedMissionPage({
       waypoints: mission.waypoints,
       pois: mission.pois,
       obstacles: mission.obstacles,
+      siteFeatures: mission.siteFeatures,
     });
     window.history.pushState({}, "", "/");
     setCurrentPage("editor");
@@ -371,6 +377,7 @@ export function SharedMissionPage({
         waypoints: mission.waypoints,
         pois: mission.pois,
         obstacles: mission.obstacles,
+        siteFeatures: mission.siteFeatures,
       });
       window.history.pushState({}, "", "/");
       setCurrentPage("editor");
@@ -393,7 +400,7 @@ export function SharedMissionPage({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${(mission.name || "mission").replace(/[^a-zA-Z0-9_-]/g, "_")}.kmz`;
+      a.download = kmzFileName(mission.name || "mission");
       a.click();
       URL.revokeObjectURL(url);
     } catch (err: any) {
@@ -586,6 +593,9 @@ export function SharedMissionPage({
                             waypoints={mission.waypoints}
                             pois={mission.pois}
                             obstacles={mission.obstacles}
+                            compareHeights={
+                              mission.config.heightMode !== "EGM96"
+                            }
                           />
                         </div>
                       )}

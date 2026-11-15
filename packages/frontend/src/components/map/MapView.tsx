@@ -14,14 +14,21 @@ import "@mapbox/mapbox-gl-geocoder/dist/mapbox-gl-geocoder.css";
 import { useMissionStore } from "@/store/missionStore";
 import { useConfigStore } from "@/store/configStore";
 import { usePreferencesStore } from "@/store/preferencesStore";
-import { getObstacleWarnings } from "@/lib/geo";
+import { getObstacleWarnings, siteFeaturesAsObstacles } from "@/lib/geo";
 import { WaypointMarker } from "./WaypointMarker";
 import { PoiMarker } from "./PoiMarker";
+import { HomeMarker } from "./HomeMarker";
+import { TakeoffMarker } from "./TakeoffMarker";
 import { MapToolbar } from "./MapToolbar";
 import { TemplateDrawHandler } from "./TemplateDrawHandler";
 import { PencilDrawHandler } from "./PencilDrawHandler";
 import { ObstacleDrawHandler } from "./ObstacleDrawHandler";
 import { ObstaclePolygon } from "./ObstaclePolygon";
+import {
+  SiteFeaturePolygon,
+  siteFeatureFillId,
+  SITE_FEATURE_FILL_PREFIX,
+} from "./SiteFeaturePolygon";
 import { AirspaceOverlay } from "./AirspaceOverlay";
 import { CameraFrustum } from "./CameraFrustum";
 import { BoxSelectHandler } from "./BoxSelectHandler";
@@ -31,7 +38,7 @@ import { ProposalLayer } from "./ProposalLayer";
 import { ProposalPanel } from "@/components/mission/ProposalPanel";
 import { SimulationPlayer } from "@/components/mission/SimulationPlayer";
 import { useSimulationStore } from "@/store/simulationStore";
-import { Triangle } from "lucide-react";
+import { Triangle, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface BuildingPopupData {
@@ -193,6 +200,7 @@ function FitBoundsOnLoad() {
   const waypoints = useMissionStore((s) => s.waypoints);
   const pois = useMissionStore((s) => s.pois);
   const obstacles = useMissionStore((s) => s.obstacles);
+  const siteFeatures = useMissionStore((s) => s.siteFeatures);
   const prevCountRef = useRef(0);
 
   useEffect(() => {
@@ -205,6 +213,9 @@ function FitBoundsOnLoad() {
       ...pois.map((p) => [p.longitude, p.latitude] as [number, number]),
       ...obstacles.flatMap((o) =>
         o.vertices.map((v) => [v[1], v[0]] as [number, number]),
+      ),
+      ...siteFeatures.flatMap((f) =>
+        f.vertices.map((v) => [v[1], v[0]] as [number, number]),
       ),
     ];
 
@@ -228,7 +239,7 @@ function FitBoundsOnLoad() {
       ] as LngLatBoundsLike,
       { padding: 50, maxZoom: 16 },
     );
-  }, [waypoints, pois, obstacles, map]);
+  }, [waypoints, pois, obstacles, siteFeatures, map]);
 
   return null;
 }
@@ -237,10 +248,17 @@ function FitBoundsOnLoad() {
 function FlightPath({ is3D }: { is3D: boolean }) {
   const waypoints = useMissionStore((s) => s.waypoints);
   const obstacles = useMissionStore((s) => s.obstacles);
+  const siteFeatures = useMissionStore((s) => s.siteFeatures);
+  const heightMode = useMissionStore((s) => s.config.heightMode);
 
   const warnings = useMemo(
-    () => getObstacleWarnings(waypoints, obstacles),
-    [waypoints, obstacles],
+    () =>
+      getObstacleWarnings(
+        waypoints,
+        [...obstacles, ...siteFeaturesAsObstacles(siteFeatures)],
+        { compareHeights: heightMode !== "EGM96" },
+      ),
+    [waypoints, obstacles, siteFeatures, heightMode],
   );
 
   const warningSegments = useMemo(() => {
@@ -472,6 +490,7 @@ export function MapView() {
   const waypoints = useMissionStore((s) => s.waypoints);
   const pois = useMissionStore((s) => s.pois);
   const obstacles = useMissionStore((s) => s.obstacles);
+  const siteFeatures = useMissionStore((s) => s.siteFeatures);
   const isAddingWaypoint = useMissionStore((s) => s.isAddingWaypoint);
   const isAddingPoi = useMissionStore((s) => s.isAddingPoi);
   const isDrawingObstacle = useMissionStore((s) => s.isDrawingObstacle);
@@ -482,6 +501,8 @@ export function MapView() {
   const addWaypoint = useMissionStore((s) => s.addWaypoint);
   const addPoi = useMissionStore((s) => s.addPoi);
   const addObstacle = useMissionStore((s) => s.addObstacle);
+  const addSiteFeature = useMissionStore((s) => s.addSiteFeature);
+  const selectSiteFeature = useMissionStore((s) => s.selectSiteFeature);
   const simulating = useSimulationStore((s) => s.active);
   const vizPrefs = usePreferencesStore((s) => s.preferences?.visualization);
   const [mapStyle, setMapStyle] = useState(
@@ -516,6 +537,18 @@ export function MapView() {
       }
       if (isAddingPoi) {
         addPoi(e.lngLat.lat, e.lngLat.lng);
+        return;
+      }
+
+      // A site feature was clicked: select it
+      const hit = e.features?.find((f) =>
+        f.layer?.id?.startsWith(SITE_FEATURE_FILL_PREFIX),
+      );
+      if (hit?.layer?.id) {
+        selectSiteFeature(
+          hit.layer.id.slice(SITE_FEATURE_FILL_PREFIX.length, -"-fill".length),
+        );
+        setBuildingPopup(null);
         return;
       }
 
@@ -560,6 +593,7 @@ export function MapView() {
       isDrawingObstacle,
       addWaypoint,
       addPoi,
+      selectSiteFeature,
     ],
   );
 
@@ -590,6 +624,7 @@ export function MapView() {
         mapStyle={mapStyle}
         cursor={cursor}
         onClick={handleClick}
+        interactiveLayerIds={siteFeatures.map((f) => siteFeatureFillId(f.id))}
         doubleClickZoom={false}
         boxZoom={false}
         id="main-map"
@@ -616,9 +651,14 @@ export function MapView() {
         <SimulationLayer is3D={is3D} />
         <ProposalLayer />
         <AirspaceOverlay />
+        {siteFeatures.map((feature) => (
+          <SiteFeaturePolygon key={feature.id} feature={feature} />
+        ))}
         {obstacles.map((obstacle) => (
           <ObstaclePolygon key={obstacle.id} obstacle={obstacle} />
         ))}
+        <HomeMarker />
+        <TakeoffMarker />
         {waypoints.map((wp) => (
           <WaypointMarker key={wp.index} waypoint={wp} is3D={is3D} />
         ))}
@@ -662,12 +702,32 @@ export function MapView() {
                 variant="outline"
                 className="w-full gap-1.5 h-7 text-xs"
                 onClick={() => {
-                  addObstacle(buildingPopup.vertices);
+                  addObstacle(buildingPopup.vertices, buildingPopup.height);
                   setBuildingPopup(null);
                 }}
               >
                 <Triangle className="h-3 w-3" />
                 Convert to obstacle
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full gap-1.5 h-7 text-xs"
+                onClick={() => {
+                  // The first one added is most likely the house itself.
+                  const hasExisting = useMissionStore
+                    .getState()
+                    .siteFeatures.some((f) => f.kind === "existing");
+                  addSiteFeature(
+                    buildingPopup.vertices,
+                    hasExisting ? "other" : "existing",
+                    { heightM: buildingPopup.height, source: "map" },
+                  );
+                  setBuildingPopup(null);
+                }}
+              >
+                <Building2 className="h-3 w-3" />
+                Add as building
               </Button>
             </div>
           </Popup>

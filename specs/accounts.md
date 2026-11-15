@@ -8,7 +8,7 @@ Sign up and log in to save your missions and access them from anywhere.
 - **Log in** with your email and password, or with Google (in cloud mode).
 - **Change your password** from the account settings.
 - **Use the app without an account** (guest mode) — you can plan flights, but you can't save them.
-- **Skip sign-in entirely** on a personal self-hosted instance (single-user mode): the app opens a local workspace by itself, and saving, the routes page and settings work with no account.
+- **Skip sign-in entirely** on a personal self-hosted instance (single-user mode): the app opens a local workspace by itself, and saving, the saved missions list and settings work with no account.
 
 ## How it works
 

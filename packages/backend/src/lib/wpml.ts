@@ -41,6 +41,108 @@ function findPoi(
   return pois.find((p) => p.id === id);
 }
 
+// ── DJI WPML rules ───────────────────────────────────────
+// Checked against DJI's WPML reference (dji-sdk/Cloud-API-Doc, template.kml,
+// waylines.wpml and common elements). See NOTES.md in the parent project.
+
+/**
+ * Height modes to write. waylines.wpml only allows WGS84 (ellipsoid) or
+ * relativeToStartPoint, and DJI Pilot 2 cannot open "aboveGroundLevel"
+ * templates, so above-ground heights are written relative to the take-off
+ * point: the same numbers, correct when the drone takes off from ground level
+ * with the site. EGM96 heights cannot be turned into ellipsoid heights
+ * without geoid data, so those keep their template mode and no execute mode.
+ */
+export function exportHeightModes(config: MissionConfig): {
+  template: string;
+  execute: "relativeToStartPoint" | null;
+} {
+  if (config.heightMode === "EGM96")
+    return { template: "EGM96", execute: null };
+  return { template: "relativeToStartPoint", execute: "relativeToStartPoint" };
+}
+
+/** DJI wants yaw angles in [-180, 180]. */
+export function normalizeHeading(degrees: number): number {
+  const d = ((((degrees + 180) % 360) + 360) % 360) - 180;
+  return d === -180 && degrees > 0 ? 180 : d;
+}
+
+/** Lenses to store photos from, by camera. DJI requires this for the payload. */
+function imageFormat(payloadEnumValue: number): string {
+  if ([43, 53, 67, 81, 83].includes(payloadEnumValue)) return "wide,ir";
+  if (payloadEnumValue === 68) return "visible";
+  return "wide";
+}
+
+const CURVED_TURNS = new Set([
+  "toPointAndStopWithContinuityCurvature",
+  "toPointAndPassWithContinuityCurvature",
+]);
+
+/**
+ * Straight-line flag. DJI's own exports write it on every waypoint: 1 for
+ * straight legs, 0 for the curved turn modes.
+ */
+function straightLineXml(turnMode: string, indent: string): string {
+  return `\n${indent}<wpml:useStraightLine>${CURVED_TURNS.has(turnMode) ? 0 : 1}</wpml:useStraightLine>`;
+}
+
+/** Route length (m) and flying time (s) between waypoints, as DJI's files carry. */
+export function routeDistanceAndDuration(mission: Mission): {
+  distance: number;
+  duration: number;
+} {
+  const R = 6371000;
+  const rad = (d: number) => (d * Math.PI) / 180;
+  let distance = 0;
+  let duration = 0;
+  const wps = mission.waypoints;
+  for (let i = 1; i < wps.length; i++) {
+    const a = wps[i - 1];
+    const b = wps[i];
+    const dLat = rad(b.latitude - a.latitude);
+    const dLon = rad(b.longitude - a.longitude);
+    const h =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(rad(a.latitude)) *
+        Math.cos(rad(b.latitude)) *
+        Math.sin(dLon / 2) ** 2;
+    const flat = 2 * R * Math.asin(Math.sqrt(h));
+    const leg = Math.hypot(flat, b.height - a.height);
+    const speed = a.useGlobalSpeed ? mission.config.autoFlightSpeed : a.speed;
+    distance += leg;
+    if (speed > 0) duration += leg / speed;
+  }
+  return {
+    distance: Math.round(distance * 100) / 100,
+    duration: Math.round(duration * 100) / 100,
+  };
+}
+
+/** Heading block fields DJI's own exports always include. */
+function headingExtrasXml(
+  poi: { latitude: number; longitude: number; height: number } | undefined,
+  indent: string,
+): string {
+  const point = poi
+    ? `${poi.latitude},${poi.longitude},${poi.height}`
+    : "0.000000,0.000000,0.000000";
+  return `\n${indent}<wpml:waypointPoiPoint>${point}</wpml:waypointPoiPoint>`;
+}
+
+/**
+ * The WPML reference take-off point: `latitude,longitude,altitude`, followed
+ * by its height above ground. Empty when the mission has no drone home point.
+ */
+function buildTakeOffRefXml(config: MissionConfig): string {
+  const point = config.takeoff;
+  if (!point) return "";
+  return `
+    <wpml:takeOffRefPoint>${point.latitude},${point.longitude},${point.elevationM ?? 0}</wpml:takeOffRefPoint>
+    <wpml:takeOffRefPointAGLHeight>0</wpml:takeOffRefPointAGLHeight>`;
+}
+
 // ── Action XML ───────────────────────────────────────────
 
 function buildActionXml(action: WaypointAction): string {
@@ -50,12 +152,14 @@ function buildActionXml(action: WaypointAction): string {
     case "takePhoto":
       paramsXml = `
               <wpml:payloadPositionIndex>${(action.params as any).payloadPositionIndex ?? 0}</wpml:payloadPositionIndex>
-              <wpml:fileSuffix>${escapeXml((action.params as any).fileSuffix || "")}</wpml:fileSuffix>`;
+              <wpml:fileSuffix>${escapeXml((action.params as any).fileSuffix || "")}</wpml:fileSuffix>
+              <wpml:useGlobalPayloadLensIndex>1</wpml:useGlobalPayloadLensIndex>`;
       break;
     case "startRecord":
       paramsXml = `
               <wpml:payloadPositionIndex>${(action.params as any).payloadPositionIndex ?? 0}</wpml:payloadPositionIndex>
-              <wpml:fileSuffix>${escapeXml((action.params as any).fileSuffix || "")}</wpml:fileSuffix>`;
+              <wpml:fileSuffix>${escapeXml((action.params as any).fileSuffix || "")}</wpml:fileSuffix>
+              <wpml:useGlobalPayloadLensIndex>1</wpml:useGlobalPayloadLensIndex>`;
       break;
     case "stopRecord":
       paramsXml = `
@@ -184,22 +288,38 @@ export function buildTemplateKml(mission: Mission): string {
         mission.waypoints.length,
       );
 
-      // Build per-waypoint heading param when using towardPOI
+      // DJI requires these whenever the waypoint does not use the global ones.
       let headingOverrideXml = "";
-      if (
-        !wp.useGlobalHeadingParam &&
-        wp.headingMode === "towardPOI" &&
-        wp.poiId
-      ) {
-        const poi = findPoi(pois, wp.poiId);
-        if (poi) {
-          headingOverrideXml = `
+      if (!wp.useGlobalHeadingParam) {
+        const mode = wp.headingMode || c.globalHeadingMode;
+        const poi = mode === "towardPOI" ? findPoi(pois, wp.poiId) : undefined;
+        const angle =
+          poi !== undefined
+            ? computeBearing(
+                wp.latitude,
+                wp.longitude,
+                poi.latitude,
+                poi.longitude,
+              )
+            : (wp.headingAngle ?? 0);
+        headingOverrideXml = `
         <wpml:waypointHeadingParam>
-          <wpml:waypointHeadingMode>towardPOI</wpml:waypointHeadingMode>
-          <wpml:waypointPoiPoint>${poi.latitude},${poi.longitude},${poi.height}</wpml:waypointPoiPoint>
-          <wpml:waypointHeadingPathMode>clockwise</wpml:waypointHeadingPathMode>
+          <wpml:waypointHeadingMode>${poi || mode !== "towardPOI" ? mode : "followWayline"}</wpml:waypointHeadingMode>
+          <wpml:waypointHeadingAngle>${normalizeHeading(angle)}</wpml:waypointHeadingAngle>${headingExtrasXml(poi, "          ")}
+          <wpml:waypointHeadingPathMode>followBadArc</wpml:waypointHeadingPathMode>
+          <wpml:waypointHeadingPoiIndex>0</wpml:waypointHeadingPoiIndex>
         </wpml:waypointHeadingParam>`;
-        }
+      }
+      const turnMode = wp.useGlobalTurnParam
+        ? c.globalTurnMode
+        : wp.turnMode || c.globalTurnMode;
+      let turnOverrideXml = "";
+      if (!wp.useGlobalTurnParam) {
+        turnOverrideXml = `
+        <wpml:waypointTurnParam>
+          <wpml:waypointTurnMode>${turnMode}</wpml:waypointTurnMode>
+          <wpml:waypointTurnDampingDist>${wp.turnDampingDist ?? 0}</wpml:waypointTurnDampingDist>
+        </wpml:waypointTurnParam>`;
       }
 
       return `
@@ -215,14 +335,15 @@ export function buildTemplateKml(mission: Mission): string {
         ${!wp.useGlobalSpeed ? `<wpml:waypointSpeed>${wp.speed}</wpml:waypointSpeed>` : ""}
         <wpml:useGlobalHeadingParam>${wp.useGlobalHeadingParam ? 1 : 0}</wpml:useGlobalHeadingParam>
         <wpml:useGlobalTurnParam>${wp.useGlobalTurnParam ? 1 : 0}</wpml:useGlobalTurnParam>
-        <wpml:gimbalPitchAngle>${wp.gimbalPitchAngle}</wpml:gimbalPitchAngle>${headingOverrideXml}${actionGroupXml}
+        <wpml:gimbalPitchAngle>${wp.gimbalPitchAngle}</wpml:gimbalPitchAngle>${headingOverrideXml}${turnOverrideXml}${straightLineXml(turnMode, "        ")}${actionGroupXml}
+        <wpml:isRisky>0</wpml:isRisky>
       </Placemark>`;
     })
     .join("");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2"
-     xmlns:wpml="http://www.dji.com/wpmz/1.0.2">
+     xmlns:wpml="http://www.dji.com/wpmz/1.0.6">
 <Document>
   <wpml:createTime>${now}</wpml:createTime>
   <wpml:updateTime>${now}</wpml:updateTime>
@@ -231,7 +352,7 @@ export function buildTemplateKml(mission: Mission): string {
     <wpml:finishAction>${c.finishAction}</wpml:finishAction>
     <wpml:exitOnRCLost>${c.exitOnRCLost}</wpml:exitOnRCLost>
     <wpml:executeRCLostAction>${c.executeRCLostAction}</wpml:executeRCLostAction>
-    <wpml:takeOffSecurityHeight>${c.takeOffSecurityHeight}</wpml:takeOffSecurityHeight>
+    <wpml:takeOffSecurityHeight>${c.takeOffSecurityHeight}</wpml:takeOffSecurityHeight>${buildTakeOffRefXml(c)}
     <wpml:globalTransitionalSpeed>${c.globalTransitionalSpeed}</wpml:globalTransitionalSpeed>
     <wpml:droneInfo>
       <wpml:droneEnumValue>${c.droneEnumValue}</wpml:droneEnumValue>
@@ -239,23 +360,35 @@ export function buildTemplateKml(mission: Mission): string {
     </wpml:droneInfo>
     <wpml:payloadInfo>
       <wpml:payloadEnumValue>${c.payloadEnumValue}</wpml:payloadEnumValue>
+      <wpml:payloadSubEnumValue>0</wpml:payloadSubEnumValue>
       <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
     </wpml:payloadInfo>
   </wpml:missionConfig>
   <Folder>
     <wpml:templateType>waypoint</wpml:templateType>
     <wpml:templateId>0</wpml:templateId>
-    <wpml:autoFlightSpeed>${c.autoFlightSpeed}</wpml:autoFlightSpeed>
     <wpml:waylineCoordinateSysParam>
       <wpml:coordinateMode>WGS84</wpml:coordinateMode>
-      <wpml:heightMode>${c.heightMode}</wpml:heightMode>
+      <wpml:heightMode>${exportHeightModes(c).template}</wpml:heightMode>
+      <wpml:positioningType>GPS</wpml:positioningType>
     </wpml:waylineCoordinateSysParam>
+    <wpml:autoFlightSpeed>${c.autoFlightSpeed}</wpml:autoFlightSpeed>
+    <wpml:globalHeight>${mission.waypoints[0]?.height ?? c.takeOffSecurityHeight}</wpml:globalHeight>
+    <wpml:caliFlightEnable>0</wpml:caliFlightEnable>
     <wpml:gimbalPitchMode>${c.gimbalPitchMode}</wpml:gimbalPitchMode>
     <wpml:globalWaypointHeadingParam>
       <wpml:waypointHeadingMode>${c.globalHeadingMode}</wpml:waypointHeadingMode>
+      <wpml:waypointHeadingAngle>0</wpml:waypointHeadingAngle>
+      <wpml:waypointPoiPoint>0.000000,0.000000,0.000000</wpml:waypointPoiPoint>
       <wpml:waypointHeadingPathMode>followBadArc</wpml:waypointHeadingPathMode>
+      <wpml:waypointHeadingPoiIndex>0</wpml:waypointHeadingPoiIndex>
     </wpml:globalWaypointHeadingParam>
-    <wpml:globalWaypointTurnMode>${c.globalTurnMode}</wpml:globalWaypointTurnMode>${placemarks}
+    <wpml:globalWaypointTurnMode>${c.globalTurnMode}</wpml:globalWaypointTurnMode>
+    <wpml:globalUseStraightLine>${CURVED_TURNS.has(c.globalTurnMode) ? 0 : 1}</wpml:globalUseStraightLine>${placemarks}
+    <wpml:payloadParam>
+      <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
+      <wpml:imageFormat>${imageFormat(c.payloadEnumValue)}</wpml:imageFormat>
+    </wpml:payloadParam>
   </Folder>
 </Document>
 </kml>`;
@@ -265,8 +398,9 @@ export function buildTemplateKml(mission: Mission): string {
 
 export function buildWaylinesWpml(mission: Mission): string {
   const c = mission.config;
+  const { execute } = exportHeightModes(c);
+  const route = routeDistanceAndDuration(mission);
   const pois = mission.pois || [];
-  const now = Date.now();
 
   const placemarks = mission.waypoints
     .map((wp, i) => {
@@ -284,21 +418,19 @@ export function buildWaylinesWpml(mission: Mission): string {
       const speed = wp.useGlobalSpeed ? c.autoFlightSpeed : wp.speed;
 
       // POI pointing: compute bearing or emit POI coordinates
-      let poiXml = "";
       let headingAngle = wp.headingAngle ?? 0;
-      if (headingMode === "towardPOI" && wp.poiId) {
-        const poi = findPoi(pois, wp.poiId);
-        if (poi) {
-          headingAngle = computeBearing(
-            wp.latitude,
-            wp.longitude,
-            poi.latitude,
-            poi.longitude,
-          );
-          poiXml = `
-          <wpml:waypointPoiPoint>${poi.latitude},${poi.longitude},${poi.height}</wpml:waypointPoiPoint>`;
-        }
+      const poi =
+        headingMode === "towardPOI" ? findPoi(pois, wp.poiId) : undefined;
+      if (poi) {
+        headingAngle = computeBearing(
+          wp.latitude,
+          wp.longitude,
+          poi.latitude,
+          poi.longitude,
+        );
       }
+      const angleEnabled =
+        headingMode === "fixed" || headingMode === "smoothTransition" ? 1 : 0;
 
       return `
       <Placemark>
@@ -310,30 +442,36 @@ export function buildWaylinesWpml(mission: Mission): string {
         <wpml:waypointSpeed>${speed}</wpml:waypointSpeed>
         <wpml:waypointHeadingParam>
           <wpml:waypointHeadingMode>${headingMode}</wpml:waypointHeadingMode>
-          <wpml:waypointHeadingAngle>${headingAngle}</wpml:waypointHeadingAngle>
-          <wpml:waypointHeadingPathMode>followBadArc</wpml:waypointHeadingPathMode>${poiXml}
+          <wpml:waypointHeadingAngle>${normalizeHeading(headingAngle)}</wpml:waypointHeadingAngle>${headingExtrasXml(poi, "          ")}
+          <wpml:waypointHeadingAngleEnable>${angleEnabled}</wpml:waypointHeadingAngleEnable>
+          <wpml:waypointHeadingPathMode>followBadArc</wpml:waypointHeadingPathMode>
+          <wpml:waypointHeadingPoiIndex>0</wpml:waypointHeadingPoiIndex>
         </wpml:waypointHeadingParam>
         <wpml:waypointTurnParam>
           <wpml:waypointTurnMode>${turnMode}</wpml:waypointTurnMode>
           <wpml:waypointTurnDampingDist>${wp.turnDampingDist ?? 0}</wpml:waypointTurnDampingDist>
-        </wpml:waypointTurnParam>
+        </wpml:waypointTurnParam>${straightLineXml(turnMode, "        ")}
         <wpml:gimbalPitchAngle>${wp.gimbalPitchAngle}</wpml:gimbalPitchAngle>${actionGroupXml}
+        <wpml:waypointGimbalHeadingParam>
+          <wpml:waypointGimbalPitchAngle>${wp.gimbalPitchAngle}</wpml:waypointGimbalPitchAngle>
+          <wpml:waypointGimbalYawAngle>0</wpml:waypointGimbalYawAngle>
+        </wpml:waypointGimbalHeadingParam>
+        <wpml:isRisky>0</wpml:isRisky>
+        <wpml:waypointWorkType>0</wpml:waypointWorkType>
       </Placemark>`;
     })
     .join("");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2"
-     xmlns:wpml="http://www.dji.com/wpmz/1.0.2">
+     xmlns:wpml="http://www.dji.com/wpmz/1.0.6">
 <Document>
-  <wpml:createTime>${now}</wpml:createTime>
-  <wpml:updateTime>${now}</wpml:updateTime>
   <wpml:missionConfig>
     <wpml:flyToWaylineMode>${c.flyToWaylineMode}</wpml:flyToWaylineMode>
     <wpml:finishAction>${c.finishAction}</wpml:finishAction>
     <wpml:exitOnRCLost>${c.exitOnRCLost}</wpml:exitOnRCLost>
     <wpml:executeRCLostAction>${c.executeRCLostAction}</wpml:executeRCLostAction>
-    <wpml:takeOffSecurityHeight>${c.takeOffSecurityHeight}</wpml:takeOffSecurityHeight>
+    <wpml:takeOffSecurityHeight>${c.takeOffSecurityHeight}</wpml:takeOffSecurityHeight>${buildTakeOffRefXml(c)}
     <wpml:globalTransitionalSpeed>${c.globalTransitionalSpeed}</wpml:globalTransitionalSpeed>
     <wpml:droneInfo>
       <wpml:droneEnumValue>${c.droneEnumValue}</wpml:droneEnumValue>
@@ -341,17 +479,29 @@ export function buildWaylinesWpml(mission: Mission): string {
     </wpml:droneInfo>
     <wpml:payloadInfo>
       <wpml:payloadEnumValue>${c.payloadEnumValue}</wpml:payloadEnumValue>
+      <wpml:payloadSubEnumValue>0</wpml:payloadSubEnumValue>
       <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
     </wpml:payloadInfo>
   </wpml:missionConfig>
   <Folder>
-    <wpml:templateId>0</wpml:templateId>
+    <wpml:templateId>0</wpml:templateId>${
+      execute
+        ? `
+    <wpml:executeHeightMode>${execute}</wpml:executeHeightMode>`
+        : ""
+    }
     <wpml:waylineId>0</wpml:waylineId>
-    <wpml:autoFlightSpeed>${c.autoFlightSpeed}</wpml:autoFlightSpeed>
+    <wpml:distance>${route.distance}</wpml:distance>
+    <wpml:duration>${route.duration}</wpml:duration>
+    <wpml:autoFlightSpeed>${c.autoFlightSpeed}</wpml:autoFlightSpeed>${
+      execute
+        ? ""
+        : `
     <wpml:waylineCoordinateSysParam>
       <wpml:coordinateMode>WGS84</wpml:coordinateMode>
       <wpml:heightMode>${c.heightMode}</wpml:heightMode>
-    </wpml:waylineCoordinateSysParam>${placemarks}
+    </wpml:waylineCoordinateSysParam>`
+    }${placemarks}
   </Folder>
 </Document>
 </kml>`;

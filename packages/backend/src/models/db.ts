@@ -75,6 +75,15 @@ export function initDb(): void {
     // Column already exists — ignore
   }
 
+  // Migration: add site_features column if missing (for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE missions ADD COLUMN site_features TEXT NOT NULL DEFAULT '[]'`,
+    );
+  } catch {
+    // Column already exists — ignore
+  }
+
   // Ensure unique index on share_token
   database.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_missions_share_token ON missions(share_token) WHERE share_token IS NOT NULL`,

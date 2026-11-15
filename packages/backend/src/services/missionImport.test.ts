@@ -1,9 +1,17 @@
 import { describe, it, expect } from "vitest";
 import JSZip from "jszip";
 import type { Mission, Waypoint } from "@droneroute/shared";
-import { DEFAULT_MISSION_CONFIG, DEFAULT_WAYPOINT } from "@droneroute/shared";
-import { generateKmzBuffer } from "./kmzGenerator.js";
-import { buildWaylinesWpml } from "../lib/wpml.js";
+import {
+  DEFAULT_MISSION_CONFIG,
+  DEFAULT_WAYPOINT,
+  kmzFileName,
+} from "@droneroute/shared";
+import { generateKmzBuffer, layoutForTarget } from "./kmzGenerator.js";
+import {
+  buildTemplateKml,
+  buildWaylinesWpml,
+  normalizeHeading,
+} from "../lib/wpml.js";
 import {
   ImportError,
   MAX_IMPORT_WAYPOINTS,
@@ -417,5 +425,243 @@ describe("thinPoints", () => {
     expect(thinned[0]).toBe(0);
     expect(thinned[10]).toBe(100);
     expect(thinPoints([1, 2], 11)).toEqual([1, 2]);
+  });
+});
+
+describe("drone home point and FlightHub 2 layout", () => {
+  const withTakeoff = (takeoff?: Mission["config"]["takeoff"]): Mission => {
+    const m = mission([wp(0), wp(1)]);
+    return { ...m, config: { ...m.config, takeoff } };
+  };
+  const names = async (buffer: Buffer) =>
+    Object.keys((await JSZip.loadAsync(buffer)).files).sort();
+
+  it("keeps the files at the top level by default", async () => {
+    const buffer = await generateKmzBuffer(withTakeoff());
+    expect(await names(buffer)).toEqual([
+      "res/",
+      "template.kml",
+      "waylines.wpml",
+    ]);
+  });
+
+  it("puts the files in wpmz/ for FlightHub 2", async () => {
+    expect(layoutForTarget("flighthub2")).toBe("wpmz");
+    expect(layoutForTarget(undefined)).toBe("root");
+    expect(layoutForTarget("anything-else")).toBe("root");
+    const buffer = await generateKmzBuffer(withTakeoff(), "wpmz");
+    expect(await names(buffer)).toEqual([
+      "wpmz/res/",
+      "wpmz/template.kml",
+      "wpmz/waylines.wpml",
+    ]);
+  });
+
+  it("writes the reference take-off point only when one is set", async () => {
+    const read = async (m: Mission, file: string) =>
+      (await JSZip.loadAsync(await generateKmzBuffer(m, "wpmz")))
+        .file(file)!
+        .async("string");
+
+    const without = await read(withTakeoff(), "wpmz/template.kml");
+    expect(without).not.toContain("takeOffRefPoint");
+
+    const point = { latitude: 41.2571, longitude: 0.9312, elevationM: 87.5 };
+    for (const file of ["wpmz/template.kml", "wpmz/waylines.wpml"]) {
+      const xml = await read(withTakeoff(point), file);
+      expect(xml).toContain(
+        "<wpml:takeOffRefPoint>41.2571,0.9312,87.5</wpml:takeOffRefPoint>",
+      );
+      expect(xml).toContain(
+        "<wpml:takeOffRefPointAGLHeight>0</wpml:takeOffRefPointAGLHeight>",
+      );
+      // Directly after the take-off security height, as in DJI's example.
+      expect(xml).toMatch(
+        /<\/wpml:takeOffSecurityHeight>\s*<wpml:takeOffRefPoint>/,
+      );
+    }
+    const noElevation = await read(
+      withTakeoff({ latitude: 41.2571, longitude: 0.9312 }),
+      "wpmz/template.kml",
+    );
+    expect(noElevation).toContain(
+      "<wpml:takeOffRefPoint>41.2571,0.9312,0</wpml:takeOffRefPoint>",
+    );
+  });
+
+  it("reads the take-off point back from either layout", async () => {
+    const point = { latitude: 41.2571, longitude: 0.9312, elevationM: 87.5 };
+    for (const layout of ["root", "wpmz"] as const) {
+      const buffer = await generateKmzBuffer(withTakeoff(point), layout);
+      const result = await importMissionFile(buffer, "route.kmz");
+      expect(result.config?.takeoff).toEqual(point);
+      expect(result.waypoints).toHaveLength(2);
+    }
+    const none = await importMissionFile(
+      await generateKmzBuffer(withTakeoff(), "wpmz"),
+      "route.kmz",
+    );
+    expect(none.config?.takeoff).toBeUndefined();
+  });
+});
+
+describe("kmzFileName", () => {
+  it("uses only characters DJI accepts in a route name", () => {
+    const name = kmzFileName(
+      'Crestwood Rd - site_grid + orbit (draft) v1.2 <a>:"/|?*\\',
+    );
+    expect(name).toBe("Crestwood Rd - site grid orbit draft v1 2 a.kmz");
+    expect(name.slice(0, -4)).not.toMatch(/[<>:"/|?*._\\]/);
+    expect(
+      kmzFileName("Crestwood Rd - site grid + foundation orbit (draft)"),
+    ).toBe("Crestwood Rd - site grid foundation orbit draft.kmz");
+    expect(kmzFileName("Ünïcode straße 12")).toBe("Ünïcode straße 12.kmz");
+    expect(kmzFileName("___")).toBe("mission.kmz");
+  });
+});
+
+describe("matches DJI's own exports", () => {
+  it("uses the WPML version and fields of real Pilot 2 / FlightHub 2 files", async () => {
+    const zip = await JSZip.loadAsync(
+      await generateKmzBuffer(mission([wp(0), wp(1)]), "wpmz"),
+    );
+    for (const file of ["wpmz/template.kml", "wpmz/waylines.wpml"]) {
+      const xml = await zip.file(file)!.async("string");
+      expect(xml).toContain('xmlns:wpml="http://www.dji.com/wpmz/1.0.6"');
+      expect(xml).toContain(
+        "<wpml:payloadSubEnumValue>0</wpml:payloadSubEnumValue>",
+      );
+      expect(xml).not.toContain("globalRTHHeight");
+    }
+    const template = await zip.file("wpmz/template.kml")!.async("string");
+    expect(template).toContain(
+      "<wpml:positioningType>GPS</wpml:positioningType>",
+    );
+    // payloadParam comes after the waypoints, as in DJI's files
+    expect(template.lastIndexOf("</Placemark>")).toBeLessThan(
+      template.indexOf("<wpml:payloadParam>"),
+    );
+  });
+});
+
+describe("DJI WPML required elements", () => {
+  // An above-ground mission like the ones planned in DroneRoute: a fixed
+  // heading waypoint, two that face a POI, per-waypoint turn settings, photos.
+  const poi = {
+    id: "p",
+    name: "Foundation",
+    latitude: 41.2505,
+    longitude: 0.9305,
+    height: 0.5,
+  };
+  const m: Mission = {
+    ...mission([
+      wp(0, {
+        useGlobalHeadingParam: false,
+        headingMode: "fixed",
+        headingAngle: 200,
+        useGlobalTurnParam: false,
+        turnMode: "toPointAndStopWithDiscontinuityCurvature",
+        height: 50,
+        actions: [
+          {
+            actionId: 0,
+            actionType: "takePhoto",
+            params: { payloadPositionIndex: 0 },
+          },
+        ],
+      }),
+      wp(1, {
+        useGlobalHeadingParam: false,
+        headingMode: "towardPOI",
+        poiId: "p",
+        useGlobalTurnParam: false,
+        turnMode: "toPointAndPassWithContinuityCurvature",
+        height: 12,
+      }),
+      wp(2, {
+        useGlobalHeadingParam: false,
+        headingMode: "towardPOI",
+        poiId: "p",
+        useGlobalTurnParam: false,
+        height: 16,
+      }),
+    ]),
+    pois: [poi],
+  };
+  m.config = {
+    ...m.config,
+    heightMode: "aboveGroundLevel",
+    takeOffSecurityHeight: 20,
+  };
+  const count = (xml: string, tag: string) =>
+    (xml.match(new RegExp(`<wpml:${tag}>`, "g")) ?? []).length;
+
+  it("normalizes headings into [-180, 180]", () => {
+    expect(normalizeHeading(200)).toBe(-160);
+    expect(normalizeHeading(180)).toBe(180);
+    expect(normalizeHeading(-190)).toBe(170);
+    expect(normalizeHeading(45)).toBe(45);
+  });
+
+  it("writes an execute height mode DJI accepts in waylines.wpml", () => {
+    const xml = buildWaylinesWpml(m);
+    expect(xml).toContain(
+      "<wpml:executeHeightMode>relativeToStartPoint</wpml:executeHeightMode>",
+    );
+    expect(xml).not.toContain("aboveGroundLevel");
+    expect(xml).not.toContain("waylineCoordinateSysParam");
+    expect(xml).toMatch(
+      /<wpml:templateId>0<\/wpml:templateId>\s*<wpml:executeHeightMode>/,
+    );
+    for (const angle of xml.matchAll(/<wpml:waypointHeadingAngle>([^<]+)</g)) {
+      expect(Math.abs(Number(angle[1]))).toBeLessThanOrEqual(180);
+    }
+    expect(count(xml, "useStraightLine")).toBe(3); // on every waypoint, as DJI writes it
+    expect(xml).toContain("<wpml:useStraightLine>0</wpml:useStraightLine>"); // the curved turn
+    expect(count(xml, "waypointGimbalHeadingParam")).toBe(3);
+    expect(count(xml, "waypointWorkType")).toBe(3);
+    expect(xml).toMatch(/<wpml:distance>\d+(\.\d+)?<\/wpml:distance>/);
+    expect(xml).not.toContain("createTime");
+  });
+
+  it("gives every template waypoint the parameters DJI requires", () => {
+    const xml = buildTemplateKml(m);
+    expect(xml).toContain(
+      "<wpml:heightMode>relativeToStartPoint</wpml:heightMode>",
+    );
+    expect(xml).toContain("<wpml:globalHeight>50</wpml:globalHeight>");
+    expect(xml).toContain(
+      "<wpml:globalUseStraightLine>1</wpml:globalUseStraightLine>",
+    );
+    expect(xml).toContain("<wpml:imageFormat>wide</wpml:imageFormat>");
+    // Three waypoints, none using global heading or turn settings.
+    expect(count(xml, "waypointHeadingParam")).toBe(3);
+    expect(count(xml, "waypointTurnParam")).toBe(3);
+    expect(count(xml, "waypointPoiPoint")).toBe(4); // global block + all three waypoints
+    expect(xml).toContain(
+      "<wpml:waypointHeadingAngle>-160</wpml:waypointHeadingAngle>",
+    );
+    expect(xml).toContain(
+      "<wpml:useGlobalPayloadLensIndex>1</wpml:useGlobalPayloadLensIndex>",
+    );
+  });
+
+  it("keeps EGM96 heights as they are, since they cannot be converted", () => {
+    const egm = { ...m, config: { ...m.config, heightMode: "EGM96" as const } };
+    expect(buildTemplateKml(egm)).toContain(
+      "<wpml:heightMode>EGM96</wpml:heightMode>",
+    );
+    expect(buildWaylinesWpml(egm)).not.toContain("executeHeightMode");
+  });
+
+  it("still reads its own export back", async () => {
+    const result = await importMissionFile(
+      await generateKmzBuffer(m, "wpmz"),
+      "route.kmz",
+    );
+    expect(result.waypoints).toHaveLength(3);
+    expect(result.waypoints.map((w) => w.height)).toEqual([50, 12, 16]);
+    expect(result.config?.heightMode).toBe("relativeToStartPoint");
   });
 });

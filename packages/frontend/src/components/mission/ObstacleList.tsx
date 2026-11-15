@@ -1,10 +1,11 @@
 import { useState, useRef } from "react";
 import { Triangle, X, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMissionStore } from "@/store/missionStore";
 import { usePreferencesStore } from "@/store/preferencesStore";
-import { polygonArea, formatArea } from "@/lib/geo";
+import { polygonArea, formatArea, OBSTACLE_CLEARANCE_M } from "@/lib/geo";
 
 export function ObstacleList() {
   const {
@@ -95,6 +96,9 @@ export function ObstacleList() {
                 <div className="text-[10px] text-muted-foreground">
                   {obstacle.vertices.length} vertices &middot;{" "}
                   {formatArea(polygonArea(obstacle.vertices), unitSystem)}
+                  {typeof obstacle.height === "number" && (
+                    <> &middot; {obstacle.height} m tall</>
+                  )}
                 </div>
               </div>
               <Button
@@ -127,6 +131,30 @@ export function ObstacleList() {
             {/* Inline editor */}
             {isEditorOpen && (
               <div className="ml-4 mr-1 mt-1 mb-2 border-l-2 border-red-400/30 bg-red-500/5 rounded-r-md p-3 space-y-2">
+                <div>
+                  <Label className="text-xs">Height (m)</Label>
+                  <Input
+                    type="number"
+                    value={obstacle.height ?? ""}
+                    onChange={(e) => {
+                      const value = parseFloat(e.target.value);
+                      updateObstacle(obstacle.id, {
+                        height: Number.isFinite(value)
+                          ? Math.min(1000, Math.max(0, value))
+                          : null,
+                      });
+                    }}
+                    min={0}
+                    max={1000}
+                    placeholder="Not set"
+                    className="h-7 text-xs"
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Waypoints and legs at least {OBSTACLE_CLEARANCE_M} m above
+                    this are reported as passing over, not as conflicts. Leave
+                    empty to flag everything inside or across the outline.
+                  </p>
+                </div>
                 <div>
                   <Label className="text-xs">Description</Label>
                   <textarea
