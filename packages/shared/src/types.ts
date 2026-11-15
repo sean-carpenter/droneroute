@@ -255,7 +255,7 @@ export interface SiteFeature {
   /** Checked against the route like an obstacle. */
   isObstacle: boolean;
   /** Where the outline came from. */
-  source: "manual" | "map";
+  source: "manual" | "map" | "proposal";
   note?: string;
 }
 
@@ -403,6 +403,14 @@ export interface ProposalStructure {
   heightM?: number;
   /** Radius of a circle that encloses the footprint, in meters. */
   footprintRadiusM?: number;
+  /**
+   * Footprint outline as [latitude, longitude] corners, when the documents
+   * give one. Accepting the proposal turns it into a site feature, and a
+   * facade suggestion may target it.
+   */
+  footprintVertices?: LatLng[];
+  /** What the structure is, which sets the site feature's kind on accept. */
+  kind?: SiteFeatureKind;
   note?: string;
 }
 
@@ -427,7 +435,8 @@ export interface ProposalSuggestion {
   kind: ProposalSuggestionKind;
   /**
    * What it applies to: `"boundary"` for grids, a structure id for orbit and
-   * tower, an alignment id for corridor and facade.
+   * tower, an alignment id for corridor. A facade takes an alignment id (one
+   * wall) or the id of a structure with a footprint (all the way around).
    */
   targetId: string;
   title: string;

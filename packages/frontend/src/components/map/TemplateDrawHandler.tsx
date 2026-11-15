@@ -205,8 +205,13 @@ export function TemplateDrawHandler() {
     else if (templateSeed.type === "orbit") setOrbitParams(templateSeed.params);
     else if (templateSeed.type === "tower") setTowerParams(templateSeed.params);
     else if (templateSeed.type === "facade") {
-      setFacadeBoundary("wall");
-      setFacadeParams(templateSeed.params);
+      if ("boundary" in templateSeed.params) {
+        setFacadeBoundary(templateSeed.params.boundary);
+        setBoundaryParams(templateSeed.params);
+      } else {
+        setFacadeBoundary("wall");
+        setFacadeParams(templateSeed.params);
+      }
     }
     setConfirmed(true);
     consumeTemplateSeed();

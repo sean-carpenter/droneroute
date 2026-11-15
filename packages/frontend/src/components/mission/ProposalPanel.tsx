@@ -134,6 +134,26 @@ export function ProposalPanel() {
   };
 
   const finish = async (status: "accepted" | "dismissed") => {
+    // Structures with a traced footprint become site features, where the
+    // pilot nudged them to, so the route is checked against them from now on.
+    if (status === "accepted") {
+      const store = useMissionStore.getState();
+      let added = 0;
+      for (const s of shown.structures) {
+        if (!s.footprintVertices || s.footprintVertices.length < 3) continue;
+        store.addSiteFeature(s.footprintVertices, s.kind ?? "other", {
+          name: s.name,
+          heightM: s.heightM ?? null,
+          source: "proposal",
+        });
+        added += 1;
+      }
+      if (added > 0) {
+        toast.success(
+          `${added} structure${added > 1 ? "s" : ""} added as site features`,
+        );
+      }
+    }
     try {
       await setStatus(active.id, status);
     } catch {

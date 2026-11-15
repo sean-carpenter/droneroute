@@ -8,8 +8,8 @@ Hand a survey, plat or permit set to an AI agent and get a first route to review
 - Ask the agent to read your documents and draft a route.
 - Review the agent's **proposal** on the map: the site boundary, structures and linear features it found, how it located the site, what it assumed and what it wants you to check.
 - **Move and rotate** the proposed site until it sits correctly on the map.
-- Turn each suggested mission into a template that opens already filled in: a mapping grid clipped to the site boundary, a corridor along a road or utility, an orbit or tower inspection around a structure, or a facade scan along a wall.
-- Mark a proposal done, or dismiss it.
+- Turn each suggested mission into a template that opens already filled in: a mapping grid clipped to the site boundary, a corridor along a road or utility, an orbit or tower inspection around a structure, a facade scan along a wall, or — when the agent traced a structure's footprint — a facade path all the way around it at its standoff distance.
+- Mark a proposal done, or dismiss it. Marking it done adds every structure the agent traced a footprint for as a [site feature](site-features.md) (where you nudged it to), with its kind, name and height — so it shows in 3D and the route is checked against it from then on.
 
 ## How it works
 
@@ -23,7 +23,8 @@ Hand a survey, plat or permit set to an AI agent and get a first route to review
 ## Good to know
 
 - DroneRoute never receives your documents — only the geometry and notes the agent extracted.
-- Nothing is added to a mission until you press **Use** and apply the template.
+- Nothing is added to a mission until you press **Use** and apply the template, or press **Done** — which adds the traced footprints as site features.
+- On the map, traced footprints show as solid cyan outlines inside the dashed site boundary while the proposal is under review.
 - Agents can list your saved missions by name but cannot change or delete them.
 - A boundary traced from bearings reports whether it closes. If it does not, a call was probably misread.
 - Curved boundary segments are approximated by straight chords.

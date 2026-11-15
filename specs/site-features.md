@@ -23,3 +23,4 @@ Draw the buildings and areas of a site on the map — the existing building, a g
 - Site features are not written to the exported KMZ.
 - Building outlines added from the map come from Mapbox's building data, which may be missing newer buildings, garages and sheds; draw those instead.
 - In 3D view a feature with a height rises to it as a solid block in its own color (lots stay flat), and clicking the block selects the feature just like clicking its footprint. A building added from the map also keeps Mapbox's own grey extrusion underneath, so the two may overlap.
+- Accepting an [AI route proposal](ai-route-proposals.md) adds the structures the agent traced footprints for as site features.

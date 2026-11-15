@@ -21,6 +21,8 @@ const structure = z.object({
   longitude,
   heightM: z.number().min(0).max(1000).optional(),
   footprintRadiusM: z.number().min(0.5).max(2000).optional(),
+  footprintVertices: z.array(latLng).min(3).max(100).optional(),
+  kind: z.enum(["existing", "garage", "addition", "lot", "other"]).optional(),
   note: longText.optional(),
 });
 
@@ -102,6 +104,14 @@ export function validateProposal(input: unknown): ProposalValidation {
       }
     } else if (s.kind === "orbit" || s.kind === "tower") {
       if (!structureIds.has(s.targetId)) return fail("the id of a structure");
+    } else if (s.kind === "facade") {
+      const target = proposal.structures.find((st) => st.id === s.targetId);
+      const targetsFootprint = (target?.footprintVertices?.length ?? 0) >= 3;
+      if (!alignmentIds.has(s.targetId) && !targetsFootprint) {
+        return fail(
+          "the id of an alignment, or of a structure with footprintVertices",
+        );
+      }
     } else if (!alignmentIds.has(s.targetId)) {
       return fail("the id of an alignment");
     }

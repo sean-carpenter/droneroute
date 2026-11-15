@@ -13,10 +13,12 @@ import {
   DEFAULT_FACADE_PARAMS,
   DEFAULT_GRID_PARAMS,
   DEFAULT_ORBIT_PARAMS,
+  DEFAULT_POLYGON_FACADE,
   DEFAULT_TOWER_PARAMS,
   boundaryCorners,
   fromLocal,
   toLocal,
+  type BoundaryFacadeParams,
   type CorridorParams,
   type FacadeParams,
   type GridParams,
@@ -43,6 +45,7 @@ export function proposalPoints(proposal: RouteProposalContent): LatLng[] {
   return [
     ...(proposal.boundary ?? []),
     ...proposal.structures.map((s): LatLng => [s.latitude, s.longitude]),
+    ...proposal.structures.flatMap((s) => s.footprintVertices ?? []),
     ...proposal.alignments.flatMap((a) => a.path),
   ];
 }
@@ -102,7 +105,14 @@ export function transformProposal<T extends RouteProposalContent>(
     boundary: proposal.boundary ? move(proposal.boundary) : undefined,
     structures: proposal.structures.map((s) => {
       const [latitude, longitude] = moveOne(s.latitude, s.longitude);
-      return { ...s, latitude, longitude };
+      return {
+        ...s,
+        latitude,
+        longitude,
+        footprintVertices: s.footprintVertices
+          ? move(s.footprintVertices)
+          : undefined,
+      };
     }),
     alignments: proposal.alignments.map((a) => ({ ...a, path: move(a.path) })),
   };
@@ -114,7 +124,8 @@ export type TemplateSeed =
   | { type: "corridor"; params: CorridorParams }
   | { type: "orbit"; params: OrbitParams }
   | { type: "tower"; params: TowerParams }
-  | { type: "facade"; params: FacadeParams };
+  /** A wall scan, or — with boundary params — a path around an outline. */
+  | { type: "facade"; params: FacadeParams | BoundaryFacadeParams };
 
 const DEFAULT_STANDOFF_M = 15;
 const DEFAULT_FOOTPRINT_RADIUS_M = 10;
@@ -176,7 +187,38 @@ export function suggestionToSeed(
       const alignment = proposal.alignments.find(
         (a) => a.id === suggestion.targetId,
       );
-      if (!alignment) return null;
+      if (!alignment) {
+        // A structure with a footprint: go all the way around it
+        const structure = proposal.structures.find(
+          (s) => s.id === suggestion.targetId,
+        );
+        const footprint = structure?.footprintVertices;
+        if (!footprint || footprint.length < 3) return null;
+        const minAltitude =
+          suggestion.minAltitudeM ?? DEFAULT_POLYGON_FACADE.minAltitude;
+        return {
+          type: "facade",
+          params: {
+            ...DEFAULT_POLYGON_FACADE,
+            vertices: footprint,
+            standoffM: suggestion.standoffM ?? DEFAULT_POLYGON_FACADE.standoffM,
+            minAltitude,
+            maxAltitude: Math.max(
+              minAltitude + 5,
+              suggestion.maxAltitudeM ??
+                (structure.heightM
+                  ? structure.heightM + 5
+                  : DEFAULT_POLYGON_FACADE.maxAltitude),
+            ),
+            aim: {
+              mode: "structureHeight",
+              height: structure.heightM
+                ? Math.round((structure.heightM / 2) * 10) / 10
+                : 0,
+            },
+          },
+        };
+      }
       const minAltitude =
         suggestion.minAltitudeM ?? DEFAULT_FACADE_PARAMS.minAltitude;
       return {

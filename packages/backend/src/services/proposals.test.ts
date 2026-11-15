@@ -144,6 +144,43 @@ describe("validateProposal", () => {
     }
   });
 
+  it("accepts a facade around a structure with a footprint", () => {
+    const result = validateProposal(
+      proposal({
+        structures: [
+          {
+            id: "barn",
+            name: "Barn",
+            latitude: 39.5005,
+            longitude: -98.3495,
+            heightM: 8,
+            kind: "existing",
+            footprintVertices: [
+              [39.5004, -98.3496],
+              [39.5006, -98.3496],
+              [39.5006, -98.3494],
+              [39.5004, -98.3494],
+            ],
+          },
+        ],
+        suggestions: [
+          {
+            kind: "facade",
+            targetId: "barn",
+            title: "All walls",
+            rationale: "Inspect every facade of the barn.",
+            standoffM: 10,
+          },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.proposal.structures[0].footprintVertices).toHaveLength(4);
+      expect(result.proposal.structures[0].kind).toBe("existing");
+    }
+  });
+
   it("rejects out-of-range and malformed data", () => {
     const bad = [
       proposal({ boundary: [[95, 0], boundary[1], boundary[2]] }),
@@ -151,6 +188,21 @@ describe("validateProposal", () => {
       proposal({ suggestions: [] }),
       proposal({
         structures: [{ id: "bad id!", name: "x", latitude: 0, longitude: 0 }],
+      }),
+      proposal({
+        structures: [
+          {
+            id: "barn",
+            name: "Barn",
+            latitude: 39.5005,
+            longitude: -98.3495,
+            // A footprint needs at least three corners
+            footprintVertices: [
+              [39.5004, -98.3496],
+              [39.5006, -98.3496],
+            ],
+          },
+        ],
       }),
       proposal({
         structures: [

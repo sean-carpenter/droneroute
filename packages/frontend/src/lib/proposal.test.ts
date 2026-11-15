@@ -166,7 +166,7 @@ describe("suggestionToSeed", () => {
       maxAltitudeM: 9,
     });
     expect(seed?.type).toBe("facade");
-    if (seed?.type !== "facade") return;
+    if (seed?.type !== "facade" || "boundary" in seed.params) return;
     expect(seed.params.point1).toEqual(proposal.alignments[0].path[0]);
     expect(seed.params.distanceM).toBe(12);
     expect(seed.params.maxAltitude).toBe(13); // kept above the minimum
@@ -182,6 +182,61 @@ describe("suggestionToSeed", () => {
         { ...base, kind: "grid", targetId: "boundary" },
       ),
     ).toBeNull();
+  });
+
+  it("seeds a polygon facade around a structure with a footprint", () => {
+    const footprint: [number, number][] = [
+      at(40, 40),
+      at(60, 40),
+      at(60, 60),
+      at(40, 60),
+    ];
+    const withFootprint: RouteProposalContent = {
+      ...proposal,
+      structures: [{ ...proposal.structures[0], footprintVertices: footprint }],
+    };
+    const seed = suggestionToSeed(withFootprint, {
+      ...base,
+      kind: "facade",
+      targetId: "silo",
+      standoffM: 12,
+    });
+    expect(seed?.type).toBe("facade");
+    if (seed?.type !== "facade" || !("boundary" in seed.params)) {
+      throw new Error("expected boundary facade params");
+    }
+    expect(seed.params.boundary).toBe("polygon");
+    if (seed.params.boundary !== "polygon") return;
+    expect(seed.params.vertices).toEqual(footprint);
+    expect(seed.params.standoffM).toBe(12);
+    expect(seed.params.maxAltitude).toBe(35); // structure height 30 + 5
+    expect(seed.params.aim).toEqual({ mode: "structureHeight", height: 15 });
+  });
+
+  it("returns null for a facade on a structure without a footprint", () => {
+    expect(
+      suggestionToSeed(proposal, { ...base, kind: "facade", targetId: "silo" }),
+    ).toBeNull();
+  });
+});
+
+describe("transformProposal with footprints", () => {
+  it("moves a structure's footprint with everything else", () => {
+    const footprint: [number, number][] = [at(40, 40), at(60, 40), at(50, 60)];
+    const withFootprint: RouteProposalContent = {
+      ...proposal,
+      structures: [{ ...proposal.structures[0], footprintVertices: footprint }],
+    };
+    const moved = transformProposal(withFootprint, {
+      eastM: 30,
+      northM: -40,
+      rotationDeg: 0,
+    });
+    const movedFootprint = moved.structures[0].footprintVertices!;
+    expect(movedFootprint).toHaveLength(3);
+    for (let i = 0; i < footprint.length; i++) {
+      expect(dist(footprint[i], movedFootprint[i])).toBeCloseTo(50, 0);
+    }
   });
 });
 

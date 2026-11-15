@@ -56,6 +56,16 @@ export function ProposalLayer() {
         geometry: { type: "Polygon", coordinates: [ring] },
       });
     }
+    for (const structure of shown.structures) {
+      const footprint = structure.footprintVertices;
+      if (!footprint || footprint.length < 3) continue;
+      const ring = [...footprint, footprint[0]].map(([lat, lng]) => [lng, lat]);
+      features.push({
+        type: "Feature",
+        properties: { kind: "footprint" },
+        geometry: { type: "Polygon", coordinates: [ring] },
+      });
+    }
     for (const alignment of shown.alignments) {
       features.push({
         type: "Feature",
@@ -101,6 +111,18 @@ export function ProposalLayer() {
             "line-width": 2.5,
             "line-dasharray": [3, 2],
           }}
+        />
+        <Layer
+          id="proposal-footprint-fill"
+          type="fill"
+          filter={["==", ["get", "kind"], "footprint"]}
+          paint={{ "fill-color": "#22d3ee", "fill-opacity": 0.2 }}
+        />
+        <Layer
+          id="proposal-footprint-line"
+          type="line"
+          filter={["==", ["get", "kind"], "footprint"]}
+          paint={{ "line-color": "#22d3ee", "line-width": 2 }}
         />
         <Layer
           id="proposal-alignment-line"

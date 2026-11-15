@@ -29,6 +29,7 @@ Use the best source available, in this order:
 ## 3. Note what is on the site
 
 - **Structures** worth inspecting or avoiding: buildings, towers, tanks, stockpiles. Give each an id, a position, a height if the documents state one, and a footprint radius (half the longest side is fine).
+  - When the documents give the outline — a site plan with dimensions, or corner coordinates — also give \`footprintVertices\` as [latitude, longitude] corners in order, and set \`kind\` (existing, garage, addition, lot, other). Always include \`heightM\` when any elevation or section sheet states or implies one. On accept, each footprint becomes a colored building outline in the planner that the route is checked against, so a traced footprint is worth the effort.
 - **Alignments**: roads, utilities, pipelines, fences, a building face to scan. Give the centerline as a path and the width to cover.
 
 ## 4. Suggest missions
@@ -41,7 +42,7 @@ Each suggestion maps onto a DroneRoute template. Suggest only what the documents
 | corridor | an alignment id | Roads, utilities and other long narrow work. Set the alignment's width. |
 | orbit | a structure id | A look around one building or asset at a single height. |
 | tower | a structure id | Tall structures: a spiral from minAltitudeM to maxAltitudeM. Keep maxAltitudeM above the structure's height. |
-| facade | an alignment id with two points | Scanning one wall. The two points are the ends of the wall. |
+| facade | an alignment id with two points, or the id of a structure with footprintVertices | Scanning one wall (the alignment's two points are its ends), or every wall of a structure: with a structure target the route goes all the way around the footprint at standoffM. |
 
 Guidance:
 
