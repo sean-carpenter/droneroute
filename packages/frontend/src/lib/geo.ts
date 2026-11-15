@@ -236,18 +236,91 @@ export interface ObstacleWarning {
   obstacleName: string;
   waypointIndex: number;
   /**
-   * "inside" and "crosses" are conflicts. "passesOver" is information: the
-   * route is above the obstacle's height with the clearance margin to spare.
+   * "inside" and "crosses" are conflicts. "tooClose" means the route stays
+   * outside the obstacle but within the standoff distance. "passesOver" is
+   * information: the route is above the obstacle's height with the clearance
+   * margin to spare.
    */
-  type: "crosses" | "inside" | "passesOver";
+  type: "crosses" | "inside" | "passesOver" | "tooClose";
+  /** For "tooClose": how near the route comes, in meters. */
+  distanceM?: number;
 }
 
 /** How far above an obstacle's height the route must be to count as clear. */
 export const OBSTACLE_CLEARANCE_M = 5;
 
+/**
+ * Minimum horizontal distance to keep between the route and an obstacle.
+ * Matches the standoff the route planning guide tells agents to use.
+ */
+export const DEFAULT_STANDOFF_M = 10;
+
 /** True for warnings that mean the route runs into an obstacle. */
 export function isObstacleConflict(warning: ObstacleWarning): boolean {
-  return warning.type !== "passesOver";
+  return warning.type === "crosses" || warning.type === "inside";
+}
+
+/** Project onto a local east/north plane in meters around `ref`. */
+function localMeters(
+  p: [number, number],
+  ref: [number, number],
+): [number, number] {
+  const R = 6371000;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  return [
+    toRad(p[1] - ref[1]) * R * Math.cos(toRad(ref[0])),
+    toRad(p[0] - ref[0]) * R,
+  ];
+}
+
+/** Distance from point `p` to the segment `a`–`b`, all in local meters. */
+function pointToSegmentM(
+  p: [number, number],
+  a: [number, number],
+  b: [number, number],
+): number {
+  const abx = b[0] - a[0];
+  const aby = b[1] - a[1];
+  const lengthSq = abx * abx + aby * aby;
+  const t =
+    lengthSq === 0
+      ? 0
+      : Math.max(
+          0,
+          Math.min(1, ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / lengthSq),
+        );
+  return Math.hypot(p[0] - (a[0] + t * abx), p[1] - (a[1] + t * aby));
+}
+
+/**
+ * Minimum horizontal distance in meters from a point or a leg to a polygon's
+ * boundary. With no `legEnd` the first argument is a lone point. Segments
+ * that intersect are the "crosses" check's job, so this assumes they do not.
+ */
+function distanceToPolygonM(
+  point: [number, number],
+  polygon: [number, number][],
+  legEnd?: [number, number],
+): number {
+  const ref = polygon[0];
+  const p1 = localMeters(point, ref);
+  const p2 = legEnd ? localMeters(legEnd, ref) : null;
+  let min = Infinity;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = localMeters(polygon[j], ref);
+    const b = localMeters(polygon[i], ref);
+    min = Math.min(min, pointToSegmentM(p1, a, b));
+    if (p2) {
+      // Non-crossing segments are nearest at one of the four endpoints
+      min = Math.min(
+        min,
+        pointToSegmentM(p2, a, b),
+        pointToSegmentM(a, p1, p2),
+        pointToSegmentM(b, p1, p2),
+      );
+    }
+  }
+  return min;
 }
 
 /**
@@ -258,6 +331,10 @@ export function isObstacleConflict(warning: ObstacleWarning): boolean {
  * Obstacle heights are above ground. Pass `compareHeights: false` when
  * waypoint heights are not (absolute EGM96 altitudes), so that nothing is
  * cleared on numbers that cannot be compared.
+ *
+ * With `standoffM` set, waypoints and legs that stay outside an obstacle but
+ * come within that distance of it get a "tooClose" warning, unless the route
+ * clears the obstacle's height.
  */
 export function getObstacleWarnings(
   waypoints: {
@@ -267,7 +344,7 @@ export function getObstacleWarnings(
     height?: number;
   }[],
   obstacles: Obstacle[],
-  options: { compareHeights?: boolean } = {},
+  options: { compareHeights?: boolean; standoffM?: number } = {},
 ): ObstacleWarning[] {
   if (obstacles.length === 0 || waypoints.length === 0) return [];
 
@@ -296,6 +373,20 @@ export function getObstacleWarnings(
           waypointIndex: wp.index,
           type: clears(wp.height) ? "passesOver" : "inside",
         });
+      } else if (options.standoffM && !clears(wp.height)) {
+        const d = distanceToPolygonM(
+          [wp.latitude, wp.longitude],
+          obstacle.vertices,
+        );
+        if (d < options.standoffM) {
+          warnings.push({
+            obstacleId: obstacle.id,
+            obstacleName: obstacle.name,
+            waypointIndex: wp.index,
+            type: "tooClose",
+            distanceM: d,
+          });
+        }
       }
     }
 
@@ -314,6 +405,22 @@ export function getObstacleWarnings(
           // Height changes evenly along a leg, so its lowest point is an end.
           type: clears(wp1.height, wp2.height) ? "passesOver" : "crosses",
         });
+      } else if (
+        options.standoffM &&
+        !clears(wp1.height, wp2.height) &&
+        !pointInPolygon(p1, obstacle.vertices) &&
+        !pointInPolygon(p2, obstacle.vertices)
+      ) {
+        const d = distanceToPolygonM(p1, obstacle.vertices, p2);
+        if (d < options.standoffM) {
+          warnings.push({
+            obstacleId: obstacle.id,
+            obstacleName: obstacle.name,
+            waypointIndex: wp1.index,
+            type: "tooClose",
+            distanceM: d,
+          });
+        }
       }
     }
   }

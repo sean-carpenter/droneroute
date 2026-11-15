@@ -217,6 +217,59 @@ describe("getObstacleWarnings", () => {
       getObstacleWarnings([wp(0, 0, -30, 5), wp(1, 0, 30, 5)], [square(25)]),
     ).toEqual([]);
   });
+
+  it("warns when a waypoint is within the standoff distance", () => {
+    // 5 m south of the square's south edge (which is 20 m north of origin)
+    const warnings = getObstacleWarnings([wp(0, 15, 0, 5)], [square(25)], {
+      standoffM: 10,
+    });
+    expect(types(warnings)).toEqual(["0:tooClose"]);
+    expect(warnings[0].distanceM).toBeCloseTo(5, 0);
+    expect(warnings.some(isObstacleConflict)).toBe(false);
+  });
+
+  it("stays quiet outside the standoff distance", () => {
+    expect(
+      getObstacleWarnings([wp(0, 5, 0, 5)], [square(25)], { standoffM: 10 }),
+    ).toEqual([]);
+  });
+
+  it("warns when a leg passes alongside within the standoff distance", () => {
+    // A leg running east-west 5 m south of the square, endpoints far away
+    const warnings = getObstacleWarnings(
+      [wp(0, 15, -40, 5), wp(1, 15, 40, 5)],
+      [square(25)],
+      { standoffM: 10 },
+    );
+    // The endpoints are ~30 m away; only the leg between them comes close
+    expect(types(warnings)).toEqual(["0:tooClose"]);
+    expect(warnings[0].distanceM).toBeCloseTo(5, 0);
+  });
+
+  it("does not warn about standoff when the route clears the top", () => {
+    expect(
+      getObstacleWarnings(
+        [wp(0, 15, 0, 25 + OBSTACLE_CLEARANCE_M)],
+        [square(25)],
+        { standoffM: 10 },
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps the standoff check when heights cannot be compared", () => {
+    const warnings = getObstacleWarnings([wp(0, 15, 0, 120)], [square(25)], {
+      standoffM: 10,
+      compareHeights: false,
+    });
+    expect(types(warnings)).toEqual(["0:tooClose"]);
+  });
+
+  it("does not double-report a waypoint that is inside as too close", () => {
+    const warnings = getObstacleWarnings([wp(0, 30, 0, 5)], [square(25)], {
+      standoffM: 10,
+    });
+    expect(types(warnings)).toEqual(["0:inside"]);
+  });
 });
 
 describe("siteFeaturesAsObstacles", () => {

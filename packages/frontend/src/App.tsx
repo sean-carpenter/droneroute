@@ -59,6 +59,7 @@ import {
   isObstacleConflict,
   siteFeaturesAsObstacles,
   OBSTACLE_CLEARANCE_M,
+  DEFAULT_STANDOFF_M,
 } from "@/lib/geo";
 import { estimateMission, formatDuration } from "@/lib/missionStats";
 import { useWindStore } from "@/store/windStore";
@@ -188,6 +189,7 @@ export default function App() {
     () =>
       getObstacleWarnings(waypoints, checkedObstacles, {
         compareHeights: config.heightMode !== "EGM96",
+        standoffM: DEFAULT_STANDOFF_M,
       }),
     [waypoints, checkedObstacles, config.heightMode],
   );
@@ -221,9 +223,29 @@ export default function App() {
         message: `${obstacleConflicts.length} obstacle warning${obstacleConflicts.length > 1 ? "s" : ""} — waypoints conflict with restricted zones`,
       });
     }
+    // Standoff: the route stays outside these obstacles but comes too close
+    const tooCloseById = new Map<string, number>();
+    for (const w of obstacleWarnings) {
+      if (w.type !== "tooClose" || w.distanceM === undefined) continue;
+      const seen = tooCloseById.get(w.obstacleId);
+      if (seen === undefined || w.distanceM < seen) {
+        tooCloseById.set(w.obstacleId, w.distanceM);
+      }
+    }
+    if (tooCloseById.size > 0) {
+      const names = checkedObstacles
+        .filter((o) => tooCloseById.has(o.id))
+        .map((o) => `${o.name} (${tooCloseById.get(o.id)!.toFixed(1)} m)`)
+        .join(", ");
+      result.push({
+        id: "obstacle-standoff",
+        type: "obstacle",
+        message: `Route comes within ${DEFAULT_STANDOFF_M} m of ${tooCloseById.size} obstacle${tooCloseById.size > 1 ? "s" : ""}: ${names}`,
+      });
+    }
     const passedOver = new Set(
       obstacleWarnings
-        .filter((w) => !isObstacleConflict(w))
+        .filter((w) => w.type === "passesOver")
         .map((w) => w.obstacleId),
     );
     if (passedOver.size > 0) {
