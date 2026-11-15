@@ -16,6 +16,7 @@ import {
 import { usePreferencesStore } from "@/store/preferencesStore";
 import type { TemplateType } from "@/lib/templates";
 import type { TemplateSeed } from "@/lib/proposal";
+import { newId } from "@/lib/ids";
 
 export type SelectionMode = "replace" | "toggle" | "range";
 
@@ -556,7 +557,7 @@ export const useMissionStore = create<MissionState>((set, get) => ({
   addPoi: (lat, lng) =>
     set((state) => {
       const poi: PointOfInterest = {
-        id: crypto.randomUUID(),
+        id: newId(),
         name: `POI ${state.pois.length + 1}`,
         latitude: lat,
         longitude: lng,
@@ -608,7 +609,7 @@ export const useMissionStore = create<MissionState>((set, get) => ({
   addObstacle: (vertices, height) =>
     set((state) => {
       const obstacle: Obstacle = {
-        id: crypto.randomUUID(),
+        id: newId(),
         name: `Obstacle ${state.obstacles.length + 1}`,
         description: "",
         vertices,
@@ -701,7 +702,7 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       const defaults = SITE_FEATURE_KINDS[kind];
       const sameKind = state.siteFeatures.filter((f) => f.kind === kind).length;
       const feature: SiteFeature = {
-        id: crypto.randomUUID(),
+        id: newId(),
         name:
           options.name ??
           (sameKind === 0
@@ -783,7 +784,7 @@ export const useMissionStore = create<MissionState>((set, get) => ({
 
       const fullPois: PointOfInterest[] = (newPois || []).map((p) => ({
         ...p,
-        id: crypto.randomUUID(),
+        id: newId(),
       }));
 
       // If orbit template created a POI, link the waypoints to it
