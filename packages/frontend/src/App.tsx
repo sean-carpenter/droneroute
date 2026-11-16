@@ -619,6 +619,7 @@ export default function App() {
           setIsDrawingObstacle(false);
           setTemplateMode(null);
           useMissionStore.getState().selectSiteFeature(null);
+          useMissionStore.getState().selectDrawing(null);
           useSimulationStore.getState().close();
           break;
         case "delete":

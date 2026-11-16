@@ -284,7 +284,8 @@ describe("drawings", () => {
   it("adds, selects, updates and removes a drawing, each undoable", () => {
     const id = store().addDrawing(drawing);
     expect(store().drawings).toEqual([{ ...drawing, id }]);
-    expect(store().selectedDrawingId).toBe(id);
+    // Added, but not in adjust mode until asked for
+    expect(store().selectedDrawingId).toBeNull();
     expect(store().dirty).toBe(true);
 
     tick();
@@ -317,5 +318,47 @@ describe("drawings", () => {
 
     store().clearMission();
     expect(store().drawings).toEqual([]);
+  });
+});
+
+describe("adjusting a drawing", () => {
+  beforeEach(() => {
+    store().clearMission();
+    store().clearHistory();
+  });
+
+  it("is a tool of its own: it switches the others off, and they switch it off", () => {
+    const id = store().addDrawing({
+      name: "Site plan",
+      image: "data:image/png;base64,iVBORw0KGgo=",
+      widthPx: 30,
+      heightPx: 20,
+      center: [42.559, -71.078],
+      widthM: 60,
+      rotationDeg: 0,
+      opacity: 0.7,
+      visible: true,
+    });
+    store().setIsAddingWaypoint(true);
+
+    store().selectDrawing(id);
+    expect(store().selectedDrawingId).toBe(id);
+    expect(store().isAddingWaypoint).toBe(false);
+
+    for (const pick of [
+      () => store().setTemplateMode("facade"),
+      () => store().setIsAddingWaypoint(true),
+      () => store().setIsAddingPoi(true),
+      () => store().setIsDrawingObstacle(true),
+      () => store().startDrawingSiteFeature("addition"),
+    ]) {
+      store().selectDrawing(id);
+      pick();
+      expect(store().selectedDrawingId).toBeNull();
+    }
+
+    // Leaving a template does not turn adjusting back on
+    store().setTemplateMode(null);
+    expect(store().selectedDrawingId).toBeNull();
   });
 });

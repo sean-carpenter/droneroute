@@ -70,7 +70,11 @@ interface MissionState {
 
   // Drawings laid over the map (site plans to trace)
   drawings: SiteDrawing[];
-  /** The drawing whose move, resize and rotate handles are showing. */
+  /**
+   * The drawing being adjusted (Adjust in the Site section): only then do its
+   * handles show and presses on it move it. Null the rest of the time, so the
+   * drawing never gets in the way of the other tools.
+   */
   selectedDrawingId: string | null;
 
   // History
@@ -177,7 +181,7 @@ interface MissionState {
   setDrawingVertices: (vertices: [number, number][]) => void;
 
   // Drawing actions
-  /** Adds the drawing, selects it and returns its id. */
+  /** Adds the drawing (not in adjust mode) and returns its id. */
   addDrawing: (drawing: Omit<SiteDrawing, "id">) => string;
   updateDrawing: (
     id: string,
@@ -269,6 +273,7 @@ export const useMissionStore = create<MissionState>((set, get) => ({
     set({
       templateMode: seed.type,
       templateSeed: seed,
+      selectedDrawingId: null,
       isAddingWaypoint: false,
       isAddingPoi: false,
       isDrawingObstacle: false,
@@ -536,6 +541,7 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       isAddingPoi: adding ? false : state.isAddingPoi,
       isDrawingObstacle: adding ? false : state.isDrawingObstacle,
       templateMode: adding ? null : state.templateMode,
+      selectedDrawingId: adding ? null : state.selectedDrawingId,
     })),
 
   addAction: (waypointIndex, action) =>
@@ -626,6 +632,7 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       isAddingWaypoint: adding ? false : state.isAddingWaypoint,
       isDrawingObstacle: adding ? false : state.isDrawingObstacle,
       templateMode: adding ? null : state.templateMode,
+      selectedDrawingId: adding ? null : state.selectedDrawingId,
     })),
 
   // Obstacle actions
@@ -707,6 +714,7 @@ export const useMissionStore = create<MissionState>((set, get) => ({
     set((state) => ({
       isDrawingObstacle: drawing,
       drawingSiteFeatureKind: null,
+      selectedDrawingId: drawing ? null : state.selectedDrawingId,
       isAddingWaypoint: drawing ? false : state.isAddingWaypoint,
       isAddingPoi: drawing ? false : state.isAddingPoi,
       templateMode: drawing ? null : state.templateMode,
@@ -791,7 +799,6 @@ export const useMissionStore = create<MissionState>((set, get) => ({
     const id = newId();
     set((state) => ({
       drawings: [...state.drawings, { ...drawing, id }],
-      selectedDrawingId: id,
       dirty: true,
     }));
     return id;
@@ -813,11 +820,29 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       dirty: true,
     })),
 
-  selectDrawing: (id) => set({ selectedDrawingId: id }),
+  // Adjusting a drawing is a tool of its own: while it is on, presses on the
+  // drawing move it, so every other map tool is switched off, and picking
+  // any other tool switches it off again.
+  selectDrawing: (id) =>
+    set(
+      id
+        ? {
+            selectedDrawingId: id,
+            isAddingWaypoint: false,
+            isAddingPoi: false,
+            isDrawingObstacle: false,
+            drawingSiteFeatureKind: null,
+            drawingVertices: [],
+            templateMode: null,
+            templateSeed: null,
+          }
+        : { selectedDrawingId: null },
+    ),
 
   setTemplateMode: (mode) =>
     set({
       templateMode: mode,
+      ...(mode ? { selectedDrawingId: null } : {}),
       isAddingWaypoint: false,
       isAddingPoi: false,
       isDrawingObstacle: false,
