@@ -144,6 +144,10 @@ export function TemplateConfigPanel({
   const unitSystem = usePreferencesStore((s) => s.preferences.unitSystem);
   const payloadEnumValue = useMissionStore((s) => s.config.payloadEnumValue);
   const { camera, exact: cameraExact } = cameraForPayload(payloadEnumValue);
+  // A wall with coverage is planned by the band of wall to photograph
+  // (photo edges on its heights), not by the drone's altitudes.
+  const wallBand = Boolean(facadeParams?.coverage);
+  const minBandM = wallBand ? 1 : 5;
   const facadeCopy = FACADE_COPY[facadeBoundary];
   const title =
     type === "orbit"
@@ -816,8 +820,16 @@ export function TemplateConfigPanel({
               />
             </div>
             <div>
-              <Label className="text-[10px]">
-                Min altitude ({heightLabel(unitSystem)})
+              <Label
+                className="text-[10px]"
+                title={
+                  wallBand
+                    ? "Lowest height on the wall to photograph; 0 includes its base"
+                    : undefined
+                }
+              >
+                {wallBand ? "Wall from" : "Min altitude"} (
+                {heightLabel(unitSystem)})
               </Label>
               <NumericInput
                 value={toDisplayHeight(facadeParams.minAltitude, unitSystem)}
@@ -827,20 +839,28 @@ export function TemplateConfigPanel({
                     ...facadeParams,
                     minAltitude: metricV,
                     maxAltitude: Math.max(
-                      metricV + 5,
+                      metricV + minBandM,
                       facadeParams.maxAltitude,
                     ),
                   });
                 }}
-                min={1}
+                min={wallBand ? 0 : 1}
                 step={1}
                 fallback={1}
                 className="h-7 text-xs"
               />
             </div>
             <div>
-              <Label className="text-[10px]">
-                Max altitude ({heightLabel(unitSystem)})
+              <Label
+                className="text-[10px]"
+                title={
+                  wallBand
+                    ? "Highest height on the wall to photograph, such as the roof line"
+                    : undefined
+                }
+              >
+                {wallBand ? "Wall up to" : "Max altitude"} (
+                {heightLabel(unitSystem)})
               </Label>
               <NumericInput
                 value={toDisplayHeight(facadeParams.maxAltitude, unitSystem)}
@@ -848,13 +868,16 @@ export function TemplateConfigPanel({
                   onFacadeChange({
                     ...facadeParams,
                     maxAltitude: Math.max(
-                      facadeParams.minAltitude + 5,
+                      facadeParams.minAltitude + minBandM,
                       fromDisplayHeight(v, unitSystem),
                     ),
                   })
                 }
-                min={toDisplayHeight(facadeParams.minAltitude + 5, unitSystem)}
-                step={5}
+                min={toDisplayHeight(
+                  facadeParams.minAltitude + minBandM,
+                  unitSystem,
+                )}
+                step={wallBand ? 0.5 : 5}
                 fallback={30}
                 className="h-7 text-xs"
               />

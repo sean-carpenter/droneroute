@@ -572,6 +572,34 @@ export function getAirspaceWarnings(
  * Site features marked "treat as obstacle", in the shape the obstacle checks
  * take, so buildings get the same warnings as drawn obstacles.
  */
+/**
+ * The building a wall was drawn along: the closest site feature with a height
+ * (not a lot) whose outline passes within `withinM` of the wall's middle.
+ */
+export function featureAlongWall(
+  point1: [number, number],
+  point2: [number, number],
+  features: SiteFeature[],
+  withinM = 3,
+): SiteFeature | null {
+  const middle: [number, number] = [
+    (point1[0] + point2[0]) / 2,
+    (point1[1] + point2[1]) / 2,
+  ];
+  let best: SiteFeature | null = null;
+  let bestM = withinM;
+  for (const f of features) {
+    if (f.kind === "lot" || !(f.heightM && f.heightM > 0)) continue;
+    if (f.vertices.length < 3) continue;
+    const d = distanceToPolygonM(middle, f.vertices);
+    if (d <= bestM) {
+      best = f;
+      bestM = d;
+    }
+  }
+  return best;
+}
+
 export function siteFeaturesAsObstacles(features: SiteFeature[]): Obstacle[] {
   return features
     .filter((f) => f.isObstacle && f.vertices.length >= 3)

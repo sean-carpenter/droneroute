@@ -3,6 +3,7 @@ import { Source, Layer, Marker, useMap } from "react-map-gl/mapbox";
 import { useMissionStore } from "@/store/missionStore";
 import { usePreferencesStore } from "@/store/preferencesStore";
 import { cameraForPayload } from "@/lib/camera";
+import { featureAlongWall } from "@/lib/geo";
 import { formatDistance } from "@/lib/units";
 import { TemplateConfigPanel } from "./TemplateConfigPanel";
 import { TemplatePreview } from "./TemplatePreview";
@@ -156,8 +157,28 @@ export function TemplateDrawHandler() {
   // follow the distance, the wall and the altitudes ("sticky" coverage).
   const updateFacade = useCallback(
     (params: FacadeParams | null) =>
-      setFacadeParams(params && withWallCoverage(params, camera)),
+      setFacadeParams(
+        params && withWallCoverage({ ...params, camera }, camera),
+      ),
     [camera],
+  );
+  // A new wall: photograph it from the ground to the roof line of the
+  // building it was drawn along, when that building has a height.
+  const siteFeatures = useMissionStore((s) => s.siteFeatures);
+  const newWall = useCallback(
+    (point1: [number, number], point2: [number, number]): FacadeParams => {
+      const building = featureAlongWall(point1, point2, siteFeatures);
+      return {
+        ...DEFAULT_FACADE_PARAMS,
+        point1,
+        point2,
+        camera,
+        ...(building?.heightM
+          ? { maxAltitude: Math.round((building.heightM + 0.5) * 10) / 10 }
+          : {}),
+      };
+    },
+    [siteFeatures, camera],
   );
   const [facadeBoundary, setFacadeBoundary] =
     useState<FacadeBoundaryKind>("wall");
@@ -223,7 +244,7 @@ export function TemplateDrawHandler() {
     }
     setConfirmed(true);
     consumeTemplateSeed();
-  }, [templateSeed, consumeTemplateSeed, resetState]);
+  }, [templateSeed, consumeTemplateSeed, resetState, updateFacade]);
 
   // Map mouse events for drag-to-draw
   useEffect(() => {
@@ -297,11 +318,7 @@ export function TemplateDrawHandler() {
             radiusTopM: radiusM,
           });
         } else {
-          updateFacade({
-            ...DEFAULT_FACADE_PARAMS,
-            point1: finalDrag.start,
-            point2: finalDrag.end,
-          });
+          updateFacade(newWall(finalDrag.start, finalDrag.end));
         }
       } else if (tm === "tower") {
         setTowerParams({
@@ -325,7 +342,15 @@ export function TemplateDrawHandler() {
       map.off("mouseup", onMouseUp);
       map.getMap().dragPan.enable();
     };
-  }, [map, templateMode, confirmed, resetState, facadeBoundary]);
+  }, [
+    map,
+    templateMode,
+    confirmed,
+    resetState,
+    facadeBoundary,
+    updateFacade,
+    newWall,
+  ]);
 
   // Polygon facades are clicked corner by corner, like an obstacle.
   useEffect(() => {
@@ -445,14 +470,7 @@ export function TemplateDrawHandler() {
         });
       }
       return generateFacade(
-        withWallCoverage(
-          {
-            ...DEFAULT_FACADE_PARAMS,
-            point1: dragState.start,
-            point2: dragState.end,
-          },
-          camera,
-        ),
+        withWallCoverage(newWall(dragState.start, dragState.end), camera),
       );
     }
     if (templateMode === "tower") {
@@ -463,7 +481,7 @@ export function TemplateDrawHandler() {
       });
     }
     return null;
-  }, [dragging, dragState, templateMode, facadeBoundary, camera]);
+  }, [dragging, dragState, templateMode, facadeBoundary, camera, newWall]);
 
   // Build drag guide GeoJSON
   const dragGuideGeojson = useMemo(() => {

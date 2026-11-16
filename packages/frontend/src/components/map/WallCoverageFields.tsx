@@ -49,21 +49,32 @@ export function WallCoverageFields({
   const setCoverage = (changes: Partial<FacadeCoverage>) =>
     onChange({ ...params, coverage: { ...coverage, ...changes } });
 
-  // What the current counts actually give, auto or manual
+  // What the current counts actually give, auto or manual. Edge photos sit
+  // with their edges on the wall's ends and on its lowest and highest height.
   const result = useMemo(() => {
-    const target = wallCoverage(params, coverage, camera);
-    const lengthM = target.spacing.horizontalM * (target.numColumns - 1);
-    const spanM = Math.abs(params.maxAltitude - params.minAltitude);
-    const horizontalM = lengthM / Math.max(1, params.numColumns - 1);
-    const verticalM = params.numRows > 1 ? spanM / (params.numRows - 1) : 0;
+    const { footprint, centersSpanM } = wallCoverage(params, coverage, camera);
+    const along = (span: number, count: number, size: number) => {
+      if (count > 1) {
+        const gap = span / (count - 1);
+        return { gap, overlap: 1 - gap / size, missed: gap > size };
+      }
+      // One photo: it covers the band only if the band fits in the photo
+      return { gap: 0, overlap: 1, missed: span > 0.01 };
+    };
+    const h = along(
+      centersSpanM.horizontal,
+      params.numColumns,
+      footprint.widthM,
+    );
+    const v = along(centersSpanM.vertical, params.numRows, footprint.heightM);
+    const low = Math.min(params.minAltitude, params.maxAltitude);
+    const high = Math.max(params.minAltitude, params.maxAltitude);
+    const half = Math.min((high - low) / 2, footprint.heightM / 2);
     return {
-      footprint: target.footprint,
-      horizontalM,
-      verticalM,
-      horizontalOverlap: 1 - horizontalM / target.footprint.widthM,
-      verticalOverlap:
-        params.numRows > 1 ? 1 - verticalM / target.footprint.heightM : 1,
-      gapsBelowLowest: params.minAltitude > target.footprint.heightM / 2,
+      footprint,
+      horizontal: h,
+      vertical: v,
+      flies: { lowM: low + half, highM: high - half },
     };
   }, [params, coverage, camera]);
 
@@ -76,9 +87,7 @@ export function WallCoverageFields({
     [previewWaypoints, config],
   );
 
-  const gaps =
-    result.horizontalOverlap < 0 ||
-    (params.numRows > 1 && result.verticalOverlap < 0);
+  const gaps = result.horizontal.missed || result.vertical.missed;
   const preset = FACADE_COVERAGE_PRESETS.find(
     (p) =>
       Math.abs(p.overlap - coverage.horizontalOverlap) < 0.001 &&
@@ -99,11 +108,17 @@ export function WallCoverageFields({
     ],
     [
       "Photo spacing",
-      `${formatShortDistance(result.horizontalM, unitSystem)} × ${formatShortDistance(result.verticalM, unitSystem)}`,
+      `${params.numColumns > 1 ? formatShortDistance(result.horizontal.gap, unitSystem) : "—"} × ${params.numRows > 1 ? formatShortDistance(result.vertical.gap, unitSystem) : "—"}`,
     ],
     [
       "Overlap",
-      `${pct(Math.max(0, result.horizontalOverlap))} × ${params.numRows > 1 ? pct(Math.max(0, result.verticalOverlap)) : "—"}`,
+      `${params.numColumns > 1 ? pct(Math.max(0, result.horizontal.overlap)) : "—"} × ${params.numRows > 1 ? pct(Math.max(0, result.vertical.overlap)) : "—"}`,
+    ],
+    [
+      "Drone flies",
+      result.flies.highM - result.flies.lowM < 0.05
+        ? `at ${formatShortDistance(result.flies.lowM, unitSystem)}`
+        : `${formatShortDistance(result.flies.lowM, unitSystem)} – ${formatShortDistance(result.flies.highM, unitSystem)}`,
     ],
     ["Photos", params.addPhotos ? `${previewWaypoints.length}` : "—"],
     ["Flight time", formatDuration(stats.estimatedFlightTimeS)],
@@ -220,7 +235,7 @@ export function WallCoverageFields({
                 coverage: { ...coverage, auto: false },
               })
             }
-            min={2}
+            min={1}
             max={MAX_SURVEY_WAYPOINTS}
             fallback={params.numColumns}
             integer
@@ -244,24 +259,15 @@ export function WallCoverageFields({
           rows or columns, or switch to Auto.
         </p>
       )}
-      {result.gapsBelowLowest && (
-        <p className="mt-1 text-[10px] text-muted-foreground">
-          The lowest row starts{" "}
-          {formatShortDistance(
-            params.minAltitude - result.footprint.heightM / 2,
-            unitSystem,
-          )}{" "}
-          above the ground; lower the min altitude to include the base of the
-          wall.
-        </p>
-      )}
       <p className="mt-1 text-[10px] text-muted-foreground">
-        Worked out for a level camera on the {camera.label}
+        Photo edges line up with the wall's ends and the heights above, so no
+        photo looks past the wall. Worked out for a level camera on the{" "}
+        {camera.label}
         {cameraExact ? "" : " (stand-in for this drone)"}. Flight time includes
         stopping at each photo but not take-off or return.
         {Math.min(
-          result.horizontalM,
-          params.numRows > 1 ? result.verticalM : Infinity,
+          params.numColumns > 1 ? result.horizontal.gap : Infinity,
+          params.numRows > 1 ? result.vertical.gap : Infinity,
         ) < 0.5
           ? " Photos under 0.5 m apart: check the controller accepts waypoints this close."
           : ""}

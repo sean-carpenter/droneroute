@@ -221,8 +221,10 @@ const TARGET_POI = {
 };
 
 describe("generateFacade — camera aim", () => {
+  // Photo centers on the altitudes (no coverage), so rows sit at 10-40 m
   const facade = (aim?: TemplateAim): FacadeParams => ({
     ...DEFAULT_FACADE_PARAMS,
+    coverage: undefined,
     point1: eastOf(0),
     point2: eastOf(40),
     distanceM: 20,
@@ -302,6 +304,9 @@ describe("generateFacade — camera aim", () => {
 
     const { waypoints } = generateFacade({
       ...DEFAULT_FACADE_PARAMS,
+      coverage: undefined,
+      minAltitude: 1,
+      maxAltitude: 30,
       point1,
       point2: eastOf(3000),
       numRows: 40,
@@ -717,60 +722,93 @@ describe("polygonFacadeAround", () => {
 });
 
 describe("wall coverage (automatic rows and columns)", () => {
-  // A wall 10 m long running east from a point at Crestwood
+  // A wall 12 m long running east, photographed from the ground to 7 m
   const start: [number, number] = [42.55917, -71.07792];
-  const metersEast = 10 / (111_320 * Math.cos((start[0] * Math.PI) / 180));
-  const end: [number, number] = [start[0], start[1] + metersEast];
+  const east = (m: number): [number, number] => [
+    start[0],
+    start[1] + m / (111_320 * Math.cos((start[0] * Math.PI) / 180)),
+  ];
   const wall = {
     point1: start,
-    point2: end,
-    distanceM: 1,
+    point2: east(12),
+    distanceM: 3,
     minAltitude: 1,
-    maxAltitude: 9,
+    maxAltitude: 8,
   };
+  const at = (overlap: number, changes = {}) =>
+    wallCoverage(
+      { ...wall, ...changes },
+      { horizontalOverlap: overlap, verticalOverlap: overlap },
+    );
 
-  it("covers a photo's width and height at the standoff (Mavic 3E, 1 m)", () => {
-    const c = wallCoverage(wall, { horizontalOverlap: 0, verticalOverlap: 0 });
-    expect(c.footprint.widthM).toBeCloseTo(17.3 / 12.3, 3);
-    expect(c.footprint.heightM).toBeCloseTo(13 / 12.3, 3);
+  it("covers a photo's width and height at the standoff (Mavic 3E)", () => {
+    const { footprint } = at(0, { distanceM: 1 });
+    expect(footprint.widthM).toBeCloseTo(17.3 / 12.3, 3);
+    expect(footprint.heightM).toBeCloseTo(13 / 12.3, 3);
+  });
+
+  it("lines edge photos up with the wall, so the counts stay small", () => {
+    // 12 m x 7 m from 3 m away: one photo covers 4.22 m x 3.17 m
+    const counts = [0, 0.2, 0.4, 0.75].map((o) => {
+      const c = at(o);
+      return [c.numRows, c.numColumns];
+    });
+    expect(counts).toEqual([
+      [3, 3],
+      [3, 4],
+      [4, 5],
+      [6, 9],
+    ]);
   });
 
   it("uses the fewest photos that keep at least the overlap", () => {
     for (const overlap of [0, 0.2, 0.4, 0.75]) {
-      const c = wallCoverage(wall, {
-        horizontalOverlap: overlap,
-        verticalOverlap: overlap,
-      });
+      const c = at(overlap, { distanceM: 1 });
       expect(c.overlap.horizontal).toBeGreaterThanOrEqual(overlap - 1e-9);
       expect(c.overlap.vertical).toBeGreaterThanOrEqual(overlap - 1e-9);
-      // One column or row fewer would drop below the target
-      const lengthM = c.spacing.horizontalM * (c.numColumns - 1);
+      // One column or row fewer would fall short of the target
+      const fewer = (span: number, n: number, size: number) =>
+        n <= 2 ? -Infinity : 1 - span / (n - 2) / size;
       expect(
-        1 - lengthM / (c.numColumns - 2) / c.footprint.widthM,
+        fewer(c.centersSpanM.horizontal, c.numColumns, c.footprint.widthM),
       ).toBeLessThan(overlap);
-      expect(1 - 8 / (c.numRows - 2) / c.footprint.heightM).toBeLessThan(
-        overlap,
-      );
+      expect(
+        fewer(c.centersSpanM.vertical, c.numRows, c.footprint.heightM),
+      ).toBeLessThan(overlap);
     }
   });
 
-  it("grows with overlap and shrinks with distance", () => {
-    const at = (distanceM: number, overlap: number) => {
-      const c = wallCoverage(
-        { ...wall, distanceM },
-        { horizontalOverlap: overlap, verticalOverlap: overlap },
-      );
-      return c.numRows * c.numColumns;
-    };
-    expect(at(1, 0.75)).toBeGreaterThan(at(1, 0.4));
-    expect(at(1, 0.4)).toBeGreaterThan(at(1, 0.2));
-    expect(at(3, 0.75)).toBeLessThan(at(1, 0.75));
+  it("takes one photo in the middle of a wall smaller than a photo", () => {
+    const c = at(0.75, { point2: east(3), maxAltitude: 3, distanceM: 3 });
+    expect([c.numRows, c.numColumns]).toEqual([1, 1]);
+    const params = withWallCoverage({
+      ...DEFAULT_FACADE_PARAMS,
+      ...wall,
+      point2: east(3),
+      maxAltitude: 3,
+    });
+    const [wp] = generateFacade(params).waypoints;
+    expect(wp.height).toBe(2); // middle of 1-3 m
+  });
+
+  it("flies half a photo inside the band, edge photos on its edges", () => {
+    const params = withWallCoverage({
+      ...DEFAULT_FACADE_PARAMS,
+      ...wall,
+      minAltitude: 0,
+      coverage: { auto: true, horizontalOverlap: 0.2, verticalOverlap: 0.2 },
+    });
+    const heights = generateFacade(params).waypoints.map((w) => w.height);
+    const half = (3 * 13) / 12.3 / 2;
+    expect(Math.min(...heights)).toBeCloseTo(half, 1);
+    expect(Math.max(...heights)).toBeCloseTo(8 - half, 1);
   });
 
   it("follows changes while auto, and leaves manual counts alone", () => {
     const params = {
       ...DEFAULT_FACADE_PARAMS,
       ...wall,
+      distanceM: 1,
       coverage: { auto: true, horizontalOverlap: 0.2, verticalOverlap: 0.2 },
     };
     const near = withWallCoverage(params);
@@ -790,6 +828,7 @@ describe("wall coverage (automatic rows and columns)", () => {
     const params = withWallCoverage({
       ...DEFAULT_FACADE_PARAMS,
       ...wall,
+      distanceM: 1,
       coverage: { auto: true, horizontalOverlap: 0.75, verticalOverlap: 0.75 },
     });
     const heights = new Set(

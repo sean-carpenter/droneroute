@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
+import type { SiteFeature } from "@droneroute/shared";
 import {
   GIMBAL_PITCH_MAX,
   GIMBAL_PITCH_MIN,
   OBSTACLE_CLEARANCE_M,
   getObstacleWarnings,
   isObstacleConflict,
+  featureAlongWall,
   resolveGimbalAim,
   siteFeaturesAsObstacles,
 } from "./geo";
@@ -314,5 +316,46 @@ describe("siteFeaturesAsObstacles", () => {
       siteFeaturesAsObstacles([{ ...base, heightM: 6 }]),
     );
     expect(warnings.map((w) => w.type)).toEqual(["crosses"]);
+  });
+});
+
+describe("featureAlongWall", () => {
+  const house: SiteFeature = {
+    id: "h",
+    name: "House",
+    kind: "existing",
+    color: "#94a3b8",
+    vertices: [
+      [42.5591, -71.078],
+      [42.5591, -71.0778],
+      [42.5593, -71.0778],
+      [42.5593, -71.078],
+    ],
+    heightM: 7.5,
+    isObstacle: true,
+    source: "manual",
+  };
+
+  it("finds the building whose outline the wall follows", () => {
+    // Along the south side, a meter outside it
+    const a: [number, number] = [42.55909, -71.07798];
+    const b: [number, number] = [42.55909, -71.07782];
+    expect(featureAlongWall(a, b, [house])?.id).toBe("h");
+  });
+
+  it("ignores far walls, lots and buildings without a height", () => {
+    const a: [number, number] = [42.5596, -71.07798];
+    const b: [number, number] = [42.5596, -71.07782];
+    expect(featureAlongWall(a, b, [house])).toBeNull();
+    const near: [number, number][] = [
+      [42.55909, -71.07798],
+      [42.55909, -71.07782],
+    ];
+    expect(
+      featureAlongWall(near[0], near[1], [{ ...house, heightM: null }]),
+    ).toBeNull();
+    expect(
+      featureAlongWall(near[0], near[1], [{ ...house, kind: "lot" }]),
+    ).toBeNull();
   });
 });

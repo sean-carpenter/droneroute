@@ -235,8 +235,15 @@ export interface FacadeParams {
   numColumns: number;
   addPhotos: boolean;
   aim: TemplateAim;
-  /** How rows and columns are chosen. Missing means manual (older seeds). */
+  /**
+   * How rows and columns are chosen. When present, photos are also placed
+   * with their edges on the wall's ends and on the min and max heights, so
+   * none of a photo looks past the wall. Missing (older seeds): photos are
+   * centered on the ends and the altitudes, and counts are manual.
+   */
   coverage?: FacadeCoverage;
+  /** Camera whose footprint places the edge photos. Mavic 3E wide if unset. */
+  camera?: CameraModel;
 }
 
 /**
@@ -284,16 +291,35 @@ export interface WallCoverage {
   numColumns: number;
   /** Wall area one photo covers at the standoff, level camera. */
   footprint: { widthM: number; heightM: number };
+  /**
+   * Distance along the wall, and up it, between the first and last photo
+   * centers: the wall minus one photo, since edge photos sit with their
+   * edges on the wall's ends and on the min and max heights.
+   */
+  centersSpanM: { horizontal: number; vertical: number };
   /** Gap between neighboring photos the counts give, in meters. */
   spacing: { horizontalM: number; verticalM: number };
-  /** Overlap the counts actually give: at least the target. */
+  /** Overlap the counts give: at least the target. */
   overlap: { horizontal: number; vertical: number };
 }
 
+/** Wall area one photo covers from `distanceM` away, level camera. */
+export function wallFootprint(
+  distanceM: number,
+  camera: CameraModel = MAVIC_3E_CAMERA,
+): { widthM: number; heightM: number } {
+  const d = Math.max(0.5, distanceM);
+  return {
+    widthM: (d * camera.sensorWidthMm) / camera.focalLengthMm,
+    heightM: (d * camera.sensorHeightMm) / camera.focalLengthMm,
+  };
+}
+
 /**
- * Fewest rows and columns that cover the wall with at least the requested
- * overlap. Photos sit at both ends of the wall and at both altitudes, as the
- * wall facade places them, with a level camera at the standoff distance.
+ * Fewest rows and columns that cover the wall, from the min to the max
+ * height, with at least the requested overlap. Edge photos sit with their
+ * edges on the wall's ends and on the min and max heights; a wall smaller
+ * than one photo gets a single photo in its middle.
  */
 export function wallCoverage(
   params: Pick<
@@ -310,33 +336,38 @@ export function wallCoverage(
     params.point2[0],
     params.point2[1],
   );
-  const spanM = Math.abs(params.maxAltitude - params.minAltitude);
-  const distance = Math.max(0.5, params.distanceM);
-  const footprint = {
-    widthM: (distance * camera.sensorWidthMm) / camera.focalLengthMm,
-    heightM: (distance * camera.sensorHeightMm) / camera.focalLengthMm,
+  const heightM = Math.abs(params.maxAltitude - params.minAltitude);
+  const footprint = wallFootprint(params.distanceM, camera);
+  const centersSpanM = {
+    horizontal: Math.max(0, lengthM - footprint.widthM),
+    vertical: Math.max(0, heightM - footprint.heightM),
   };
-  const maxStepH = Math.max(
-    MIN_FACADE_PHOTO_SPACING_M,
-    footprint.widthM * (1 - clamp(coverage.horizontalOverlap)),
-  );
-  const maxStepV = Math.max(
-    MIN_FACADE_PHOTO_SPACING_M,
-    footprint.heightM * (1 - clamp(coverage.verticalOverlap)),
-  );
+  const step = {
+    horizontal: Math.max(
+      MIN_FACADE_PHOTO_SPACING_M,
+      footprint.widthM * (1 - clamp(coverage.horizontalOverlap)),
+    ),
+    vertical: Math.max(
+      MIN_FACADE_PHOTO_SPACING_M,
+      footprint.heightM * (1 - clamp(coverage.verticalOverlap)),
+    ),
+  };
   // A tiny tolerance keeps an exact fit from adding a needless photo
-  const numColumns = Math.max(2, Math.ceil(lengthM / maxStepH - 1e-9) + 1);
-  const numRows =
-    spanM < 0.05 ? 1 : Math.max(2, Math.ceil(spanM / maxStepV - 1e-9) + 1);
-  const horizontalM = lengthM / (numColumns - 1);
-  const verticalM = numRows > 1 ? spanM / (numRows - 1) : 0;
+  const count = (span: number, stepM: number) =>
+    span < 0.01 ? 1 : Math.ceil(span / stepM - 1e-9) + 1;
+  const numColumns = count(centersSpanM.horizontal, step.horizontal);
+  const numRows = count(centersSpanM.vertical, step.vertical);
+  const horizontalM =
+    numColumns > 1 ? centersSpanM.horizontal / (numColumns - 1) : 0;
+  const verticalM = numRows > 1 ? centersSpanM.vertical / (numRows - 1) : 0;
   return {
     numRows,
     numColumns,
     footprint,
+    centersSpanM,
     spacing: { horizontalM, verticalM },
     overlap: {
-      horizontal: 1 - horizontalM / footprint.widthM,
+      horizontal: numColumns > 1 ? 1 - horizontalM / footprint.widthM : 1,
       vertical: numRows > 1 ? 1 - verticalM / footprint.heightM : 1,
     },
   };
@@ -348,7 +379,11 @@ export function withWallCoverage(
   camera: CameraModel = MAVIC_3E_CAMERA,
 ): FacadeParams {
   if (!params.coverage?.auto) return params;
-  const { numRows, numColumns } = wallCoverage(params, params.coverage, camera);
+  const { numRows, numColumns } = wallCoverage(
+    params,
+    params.coverage,
+    params.camera ?? camera,
+  );
   return numRows === params.numRows && numColumns === params.numColumns
     ? params
     : { ...params, numRows, numColumns };
@@ -499,10 +534,12 @@ export const DEFAULT_CORRIDOR_PARAMS: Omit<CorridorParams, "path"> = {
 
 export const DEFAULT_FACADE_PARAMS: Omit<FacadeParams, "point1" | "point2"> = {
   distanceM: 1,
-  minAltitude: 1,
-  maxAltitude: 30,
+  // The band of wall to photograph: from the ground to a house's roof line.
+  // A wall drawn along a site feature with a height takes that height.
+  minAltitude: 0,
+  maxAltitude: 8,
   // Placeholders: with automatic coverage on, the counts are worked out from
-  // the wall, distance and altitudes as soon as the wall is drawn.
+  // the wall, distance and heights as soon as the wall is drawn.
   numRows: 30,
   numColumns: 2,
   addPhotos: true,
@@ -1289,6 +1326,29 @@ export function generateFacade(
   const [lat1, lng1] = point1;
   const [lat2, lng2] = point2;
 
+  // With coverage, edge photos sit with their edges on the wall's ends and on
+  // the min and max heights: centers are half a photo in from each edge (the
+  // middle, for a wall smaller than a photo). Without it (older seeds), photo
+  // centers are on the ends and the altitudes.
+  let colFrom = 0;
+  let colTo = 1;
+  let altFrom = minAltitude;
+  let altTo = maxAltitude;
+  if (params.coverage) {
+    const lengthM = haversine(lat1, lng1, lat2, lng2);
+    const footprint = wallFootprint(distanceM, params.camera);
+    const halfW = Math.min(lengthM / 2, footprint.widthM / 2);
+    if (lengthM > 0) {
+      colFrom = halfW / lengthM;
+      colTo = 1 - colFrom;
+    }
+    const low = Math.min(minAltitude, maxAltitude);
+    const high = Math.max(minAltitude, maxAltitude);
+    const halfH = Math.min((high - low) / 2, footprint.heightM / 2);
+    altFrom = low + halfH;
+    altTo = high - halfH;
+  }
+
   const waypoints: TemplateResult["waypoints"] = [];
 
   // Wall bearing and perpendicular offset direction
@@ -1303,12 +1363,12 @@ export function generateFacade(
     row < numRows && waypoints.length < MAX_SURVEY_WAYPOINTS;
     row++
   ) {
-    const altFraction = numRows <= 1 ? 0 : row / (numRows - 1);
+    // A single row or column sits in the middle of its band when aligned
+    const altFraction =
+      numRows <= 1 ? (params.coverage ? 0.5 : 0) : row / (numRows - 1);
     // Tenths of a meter: close-range rows can be well under a meter apart,
     // and whole meters would stack several of them at the same height
-    const alt = roundTenth(
-      minAltitude + altFraction * (maxAltitude - minAltitude),
-    );
+    const alt = roundTenth(altFrom + altFraction * (altTo - altFrom));
     const reverse = row % 2 === 1; // zigzag
 
     for (
@@ -1317,7 +1377,14 @@ export function generateFacade(
       col++
     ) {
       const colIdx = reverse ? numColumns - 1 - col : col;
-      const colFraction = numColumns <= 1 ? 0 : colIdx / (numColumns - 1);
+      const colFraction =
+        colFrom +
+        (numColumns <= 1
+          ? params.coverage
+            ? 0.5
+            : 0
+          : colIdx / (numColumns - 1)) *
+          (colTo - colFrom);
 
       // Point along the wall
       const wallLat = lat1 + colFraction * (lat2 - lat1);
