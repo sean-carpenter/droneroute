@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Layer, Marker, Source, useMap } from "react-map-gl/mapbox";
-import type { ImageSource } from "mapbox-gl";
+import type { ImageSource, MapMouseEvent, MapTouchEvent } from "mapbox-gl";
 import type { SiteDrawing } from "@droneroute/shared";
 import { useMissionStore } from "@/store/missionStore";
+import { pointInPolygon } from "@/lib/geo";
+import { RotateCw } from "lucide-react";
 import {
   drawingCorners,
   drawingImageCoordinates,
@@ -41,9 +43,9 @@ const HANDLE_STYLE = {
 } as const;
 
 /**
- * A drawing laid over the map. When selected it shows handles: drag the middle
- * to move it, a corner to resize it (proportions kept), the round handle to
- * rotate it. While dragging, only the outline and the image corners move; the
+ * A drawing laid over the map. When selected it shows handles: drag the
+ * drawing itself (or its middle handle) to move it, a corner to resize it
+ * (proportions kept), the round handle to rotate it. While dragging, only the outline and the image corners move; the
  * change is saved once on release, so it is a single undo step.
  */
 export function DrawingOverlay({
@@ -73,23 +75,104 @@ export function DrawingOverlay({
     source?.setCoordinates(drawingImageCoordinates(shown));
   }, [map, preview, shown, sourceId]);
 
+  // While the handles show, the drawing itself can be dragged to move it.
+  // Only presses on the map canvas count, so the handles keep their own drags.
+  useEffect(() => {
+    if (!map || !selected) return;
+    const m = map.getMap();
+    const canvas = m.getCanvas();
+    const corners = drawingCorners(drawing);
+    const isOver = (e: MapMouseEvent | MapTouchEvent) =>
+      pointInPolygon([e.lngLat.lat, e.lngLat.lng], corners);
+
+    let from: { lat: number; lng: number } | null = null;
+    let moved: [number, number] | null = null;
+    let cursorBefore: string | null = null;
+
+    const onDown = (e: MapMouseEvent | MapTouchEvent) => {
+      if ("points" in e && e.points.length !== 1) return; // pinch zoom
+      if (e.originalEvent.target !== canvas || !isOver(e)) return;
+      e.preventDefault(); // the map must not pan while the drawing moves
+      from = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+      moved = null;
+      setActive("move");
+    };
+    const onMove = (e: MapMouseEvent | MapTouchEvent) => {
+      if (from) {
+        moved = [
+          drawing.center[0] + e.lngLat.lat - from.lat,
+          drawing.center[1] + e.lngLat.lng - from.lng,
+        ];
+        setPreview({
+          center: moved,
+          widthM: drawing.widthM,
+          rotationDeg: drawing.rotationDeg,
+        });
+        return;
+      }
+      // Show a move cursor over the drawing, and give back the tool's after
+      const over = isOver(e);
+      if (over && cursorBefore === null) {
+        cursorBefore = canvas.style.cursor;
+        canvas.style.cursor = "move";
+      } else if (!over && cursorBefore !== null) {
+        canvas.style.cursor = cursorBefore;
+        cursorBefore = null;
+      }
+    };
+    const onUp = () => {
+      if (!from) return;
+      from = null;
+      if (moved) updateDrawing(drawing.id, { center: moved });
+      moved = null;
+      setPreview(null);
+      setActive(null);
+    };
+
+    m.on("mousedown", onDown);
+    m.on("touchstart", onDown);
+    m.on("mousemove", onMove);
+    m.on("touchmove", onMove);
+    m.on("touchend", onUp);
+    // Released anywhere, even over the sidebar
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      m.off("mousedown", onDown);
+      m.off("touchstart", onDown);
+      m.off("mousemove", onMove);
+      m.off("touchmove", onMove);
+      m.off("touchend", onUp);
+      window.removeEventListener("mouseup", onUp);
+      if (cursorBefore !== null) canvas.style.cursor = cursorBefore;
+    };
+  }, [map, selected, drawing, updateDrawing]);
+
   const committedCoordinates = useMemo(
     () => drawingImageCoordinates(drawing),
     [drawing],
   );
 
   const corners = useMemo(() => drawingCorners(shown), [shown]);
-  const outline = useMemo(
-    () => ({
+  // The outline, plus a stem from the top edge out to the rotate handle
+  const outline = useMemo(() => {
+    const [tl, tr] = corners;
+    const topMiddle: [number, number] = [
+      (tl[1] + tr[1]) / 2,
+      (tl[0] + tr[0]) / 2,
+    ];
+    const handle = drawingRotateHandle(shown);
+    return {
       type: "Feature" as const,
       properties: {},
       geometry: {
-        type: "LineString" as const,
-        coordinates: [...corners, corners[0]].map(([lat, lng]) => [lng, lat]),
+        type: "MultiLineString" as const,
+        coordinates: [
+          [...corners, corners[0]].map(([lat, lng]) => [lng, lat]),
+          [topMiddle, [handle[1], handle[0]]],
+        ],
       },
-    }),
-    [corners],
-  );
+    };
+  }, [corners, shown]);
 
   const start = (handle: Handle) => setActive(handle);
   const drag = (handle: Handle, lat: number, lng: number) => {
@@ -221,10 +304,15 @@ export function DrawingOverlay({
                   title={`Drag to rotate the drawing (${Math.round(shown.rotationDeg)}°)`}
                   style={{
                     ...HANDLE_STYLE,
+                    width: 22,
+                    height: 22,
                     borderRadius: "50%",
                     cursor: "grab",
                   }}
-                />
+                  className="flex items-center justify-center text-sky-600"
+                >
+                  <RotateCw className="h-3 w-3" strokeWidth={3} />
+                </div>
               </Marker>
             );
           })()}

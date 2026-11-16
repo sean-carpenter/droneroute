@@ -86,7 +86,7 @@ export function drawingImageCoordinates(
 /** Where the rotate handle sits: just beyond the middle of the top edge. */
 export function drawingRotateHandle(d: Placement): LatLng {
   const hh = drawingHeightM(d) / 2;
-  return placeLocal(d, 0, hh + Math.max(2, hh * 0.15));
+  return placeLocal(d, 0, hh + Math.max(4, hh * 0.3));
 }
 
 function clampWidth(widthM: number): number {

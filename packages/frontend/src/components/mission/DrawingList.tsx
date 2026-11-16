@@ -1,5 +1,14 @@
 import { useRef, useState } from "react";
-import { Eye, EyeOff, FileUp, Loader2, Move, X } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  FileUp,
+  Loader2,
+  Move,
+  RotateCcw,
+  RotateCw,
+  X,
+} from "lucide-react";
 import { SITE_DRAWING_LIMITS } from "@droneroute/shared";
 import { Button } from "@/components/ui/button";
 import { useMissionStore } from "@/store/missionStore";
@@ -142,7 +151,7 @@ export function DrawingList() {
                     {Math.round(d.opacity * 100)}%
                   </span>
                 </label>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <label className="flex items-center gap-1">
                     Width
                     <input
@@ -184,10 +193,29 @@ export function DrawingList() {
                     />
                     °
                   </label>
+                  {(
+                    [
+                      [-90, RotateCcw, "Turn 90° counterclockwise"],
+                      [90, RotateCw, "Turn 90° clockwise"],
+                    ] as const
+                  ).map(([step, Icon, label]) => (
+                    <button
+                      key={step}
+                      className="rounded border border-input p-1 text-foreground hover:bg-secondary"
+                      onClick={() =>
+                        updateDrawing(d.id, {
+                          rotationDeg: normalizeDegrees(d.rotationDeg + step),
+                        })
+                      }
+                      title={label}
+                    >
+                      <Icon className="h-3 w-3" />
+                    </button>
+                  ))}
                 </div>
                 <p>
-                  On the map, drag the middle to move it, a corner to resize it
-                  and the round handle to rotate it.
+                  On the map, drag the drawing to move it, a corner to resize it
+                  and the round ⟳ handle above it to rotate it.
                 </p>
               </div>
             )}

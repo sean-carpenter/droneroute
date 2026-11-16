@@ -12,7 +12,7 @@ export async function addDrawingWithFeedback(file: File): Promise<boolean> {
     toast.success("Drawing added", {
       id,
       description:
-        "Drag the middle to move it, a corner to resize it and the round handle to rotate it until it lines up with the map.",
+        "Drag it to move it, a corner to resize it and the round handle to rotate it until it lines up with the map.",
     });
     return true;
   } catch (err) {
