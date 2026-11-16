@@ -43,7 +43,7 @@ Grid (photogrammetry mode) and corridor surveys offer three ways to take photos:
 2. For a facade, pick Wall, Circle, Spiral, or Polygon in the panel first. The other templates go straight to drawing.
 3. Configure the template options in the panel that appears.
 4. Click or drag on the map to place the template. A polygon facade closes when you double-click or click the first corner.
-   - A polygon facade can also start from an existing outline: open a [site feature](site-features.md)'s settings (gear icon) and press **Plan facade inspection**. The template opens around that footprint, from near the ground to just above the feature's height when one is set, aiming at its middle.
+   - A polygon facade can also start from an existing outline: open a [site feature](site-features.md)'s settings (gear icon) and press **Plan facade inspection**. The template opens around that footprint, 1 m outside it, from 1 m above the ground to just above the feature's height when one is set, looking straight at the wall.
 5. The generated waypoints appear in the sidebar and can be edited individually.
 
 ## Good to know
@@ -52,7 +52,7 @@ Grid (photogrammetry mode) and corridor surveys offer three ways to take photos:
 - If the mission speed is too fast for the camera to keep up with the photo interval, the panel warns you and shows the highest usable speed.
 - Survey templates are capped at 2000 waypoints.
 - Templates are repeatable: the same settings always produce exactly the same waypoints and camera angles, so an inspection can be regenerated and flown again.
-- Facade and orbit keep their earlier defaults (aim at the wall base / the ground under the center).
+- A new facade or tower inspection starts 1 m from the structure, with the lowest pass 1 m above the ground, and looks straight at the surface beside the drone. An orbit still aims at the ground under the center.
 - When an orbit or tower creates its center POI, the POI is placed at the height the camera aims for.
 
 - You can combine templates — for example, use a grid survey and then add an orbit around a specific structure.

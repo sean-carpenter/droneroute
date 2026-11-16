@@ -102,12 +102,12 @@ export function BoundaryFacadeFields({
             onChange={(value) =>
               onChange({
                 ...params,
-                standoffM: Math.max(3, fromDisplayDistance(value, unitSystem)),
+                standoffM: Math.max(1, fromDisplayDistance(value, unitSystem)),
               })
             }
-            min={3}
+            min={1}
             step={1}
-            fallback={20}
+            fallback={1}
             className="h-7 text-xs"
           />
         </div>
@@ -146,9 +146,9 @@ export function BoundaryFacadeFields({
                 minAltitude: fromDisplayHeight(value, unitSystem),
               })
             }
-            min={2}
-            step={5}
-            fallback={10}
+            min={1}
+            step={1}
+            fallback={1}
             className="h-7 text-xs"
           />
         </div>
@@ -164,7 +164,7 @@ export function BoundaryFacadeFields({
                 maxAltitude: fromDisplayHeight(value, unitSystem),
               })
             }
-            min={2}
+            min={1}
             step={5}
             fallback={40}
             className="h-7 text-xs"
@@ -284,7 +284,7 @@ export function BoundaryFacadeFields({
               }
               min={0.5}
               step={1}
-              fallback={5}
+              fallback={1}
               className="h-7 text-xs"
             />
           </div>
@@ -304,7 +304,7 @@ export function BoundaryFacadeFields({
               }
               min={0.5}
               step={1}
-              fallback={4}
+              fallback={1}
               className="h-7 text-xs"
             />
           </div>

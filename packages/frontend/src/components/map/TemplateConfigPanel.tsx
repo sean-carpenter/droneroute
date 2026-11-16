@@ -31,7 +31,12 @@ import type {
   BoundaryFacadeResult,
   TemplateResult,
 } from "@/lib/templates";
-import { corridorLayout, gridSpacing } from "@/lib/templates";
+import {
+  MAX_SURVEY_WAYPOINTS,
+  corridorLayout,
+  gridSpacing,
+  wallPhotoCounts,
+} from "@/lib/templates";
 import { cameraForPayload } from "@/lib/camera";
 import { useMissionStore } from "@/store/missionStore";
 import { SurveyFields } from "./SurveyFields";
@@ -242,9 +247,9 @@ export function TemplateConfigPanel({
                     radiusM: fromDisplayDistance(v, unitSystem),
                   })
                 }
-                min={5}
-                step={5}
-                fallback={5}
+                min={1}
+                step={1}
+                fallback={1}
                 className="h-7 text-xs"
               />
             </div>
@@ -529,9 +534,9 @@ export function TemplateConfigPanel({
                     radiusM: fromDisplayDistance(v, unitSystem),
                   })
                 }
-                min={3}
-                step={5}
-                fallback={15}
+                min={1}
+                step={1}
+                fallback={1}
                 className="h-7 text-xs"
               />
             </div>
@@ -563,9 +568,9 @@ export function TemplateConfigPanel({
                     maxAltitude: Math.max(metricV, towerParams.maxAltitude),
                   });
                 }}
-                min={2}
-                step={5}
-                fallback={10}
+                min={1}
+                step={1}
+                fallback={1}
                 className="h-7 text-xs"
               />
             </div>
@@ -584,7 +589,7 @@ export function TemplateConfigPanel({
                     ),
                   })
                 }
-                min={2}
+                min={1}
                 step={5}
                 fallback={50}
                 className="h-7 text-xs"
@@ -808,9 +813,9 @@ export function TemplateConfigPanel({
                     distanceM: fromDisplayDistance(v, unitSystem),
                   })
                 }
-                min={3}
-                step={5}
-                fallback={20}
+                min={1}
+                step={1}
+                fallback={1}
                 className="h-7 text-xs"
               />
             </div>
@@ -831,9 +836,9 @@ export function TemplateConfigPanel({
                     ),
                   });
                 }}
-                min={2}
-                step={5}
-                fallback={10}
+                min={1}
+                step={1}
+                fallback={1}
                 className="h-7 text-xs"
               />
             </div>
@@ -866,8 +871,15 @@ export function TemplateConfigPanel({
                   onFacadeChange({ ...facadeParams, numRows: v })
                 }
                 min={1}
-                max={20}
-                fallback={4}
+                max={MAX_SURVEY_WAYPOINTS}
+                fallback={
+                  wallPhotoCounts(
+                    facadeParams.point1,
+                    facadeParams.point2,
+                    facadeParams.minAltitude,
+                    facadeParams.maxAltitude,
+                  ).numRows
+                }
                 integer
                 className="h-7 text-xs"
               />
@@ -880,8 +892,15 @@ export function TemplateConfigPanel({
                   onFacadeChange({ ...facadeParams, numColumns: v })
                 }
                 min={2}
-                max={30}
-                fallback={8}
+                max={MAX_SURVEY_WAYPOINTS}
+                fallback={
+                  wallPhotoCounts(
+                    facadeParams.point1,
+                    facadeParams.point2,
+                    facadeParams.minAltitude,
+                    facadeParams.maxAltitude,
+                  ).numColumns
+                }
                 integer
                 className="h-7 text-xs"
               />
@@ -903,6 +922,12 @@ export function TemplateConfigPanel({
               </label>
             </div>
           </div>
+          {facadeParams.numRows * facadeParams.numColumns > waypointCount && (
+            <p className="text-[10px] text-orange-300 mb-2">
+              Only the first {waypointCount} photos are kept. Use fewer rows or
+              columns to keep them all.
+            </p>
+          )}
           <CameraAimSection
             aim={facadeParams.aim}
             onChange={(aim) => onFacadeChange({ ...facadeParams, aim })}

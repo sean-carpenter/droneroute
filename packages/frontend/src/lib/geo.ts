@@ -250,8 +250,8 @@ export interface ObstacleWarning {
 export const OBSTACLE_CLEARANCE_M = 5;
 
 /**
- * Minimum horizontal distance to keep between the route and an obstacle.
- * Matches the standoff the route planning guide tells agents to use.
+ * Distance at which a route that stays outside an obstacle is still called
+ * too close. Advice only: it does not block the route.
  */
 export const DEFAULT_STANDOFF_M = 10;
 

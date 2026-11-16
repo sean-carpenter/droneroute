@@ -339,16 +339,21 @@ export const DEFAULT_ORBIT_PARAMS: Omit<OrbitParams, "center" | "radiusM"> = {
   aim: { mode: "structureHeight", height: 0 },
 };
 
+/** Look straight at the wall or mast beside the drone. */
+export const LEVEL_SURFACE_AIM: TemplateAim = {
+  mode: "relativeToSurface",
+  offsetDeg: 0,
+};
+
 export const DEFAULT_TOWER_PARAMS: Omit<TowerParams, "center" | "radiusM"> = {
-  minAltitude: 10,
+  minAltitude: 1,
   maxAltitude: 50,
   turns: 4,
   pointsPerTurn: 8,
   style: "helix",
   clockwise: true,
   createPoi: true,
-  // Halfway up the default altitude range
-  aim: { mode: "structureHeight", height: 30 },
+  aim: LEVEL_SURFACE_AIM,
 };
 
 export const DEFAULT_GRID_PARAMS: Omit<GridParams, "corner1" | "corner2"> = {
@@ -376,22 +381,23 @@ export const DEFAULT_CORRIDOR_PARAMS: Omit<CorridorParams, "path"> = {
 };
 
 export const DEFAULT_FACADE_PARAMS: Omit<FacadeParams, "point1" | "point2"> = {
-  distanceM: 20,
-  minAltitude: 10,
+  distanceM: 1,
+  minAltitude: 1,
   maxAltitude: 30,
-  numRows: 4,
-  numColumns: 8,
+  // 1 m apart over the default band. The draw handler replaces both once
+  // the wall length is known.
+  numRows: 30,
+  numColumns: 2,
   addPhotos: true,
-  // Wall base, as before
-  aim: { mode: "structureHeight", height: 0 },
+  aim: LEVEL_SURFACE_AIM,
 };
 
 export const DEFAULT_FACADE_SPACING: FacadeSpacing = {
-  mode: "overlap",
+  mode: "distance",
   horizontalOverlap: 0.75,
   verticalOverlap: 0.75,
-  horizontalM: 5,
-  verticalM: 4,
+  horizontalM: 1,
+  verticalM: 1,
 };
 
 export const DEFAULT_RADIAL_FACADE: Omit<
@@ -399,30 +405,30 @@ export const DEFAULT_RADIAL_FACADE: Omit<
   "boundary" | "center" | "handle" | "radiusBottomM" | "radiusTopM"
 > = {
   tapered: false,
-  standoffM: 20,
-  minAltitude: 10,
+  standoffM: 1,
+  minAltitude: 1,
   maxAltitude: 40,
   pattern: "horizontal",
   spacing: DEFAULT_FACADE_SPACING,
   clockwise: true,
   createPoi: true,
-  aim: { mode: "structureHeight", height: 0 },
+  aim: LEVEL_SURFACE_AIM,
 };
 
 export const DEFAULT_POLYGON_FACADE: Omit<PolygonFacadeParams, "vertices"> = {
   boundary: "polygon",
-  standoffM: 20,
-  minAltitude: 10,
+  standoffM: 1,
+  minAltitude: 1,
   maxAltitude: 40,
   pattern: "horizontal",
   spacing: DEFAULT_FACADE_SPACING,
-  aim: { mode: "structureHeight", height: 0 },
+  aim: LEVEL_SURFACE_AIM,
 };
 
 /**
  * Facade settings for going all the way around a structure's footprint.
  * With a known height the band runs from near the ground to just above the
- * top, and the camera aims at the structure's middle.
+ * top, and the camera looks straight at the wall.
  */
 export function polygonFacadeAround(
   vertices: [number, number][],
@@ -431,7 +437,7 @@ export function polygonFacadeAround(
   const minAltitude = heightM
     ? Math.min(
         DEFAULT_POLYGON_FACADE.minAltitude,
-        Math.max(2, Math.round(heightM * 0.25)),
+        Math.max(1, Math.round(heightM * 0.25)),
       )
     : DEFAULT_POLYGON_FACADE.minAltitude;
   return {
@@ -442,10 +448,6 @@ export function polygonFacadeAround(
       minAltitude + 5,
       heightM ? heightM + 5 : DEFAULT_POLYGON_FACADE.maxAltitude,
     ),
-    aim: {
-      mode: "structureHeight",
-      height: heightM ? Math.round((heightM / 2) * 10) / 10 : 0,
-    },
   };
 }
 
@@ -1130,6 +1132,27 @@ export function generateCorridor(
   };
 }
 
+/**
+ * Row and column counts so photos land about `spacingM` apart along a wall
+ * and up the altitude band. Both ends of the wall and both altitudes are
+ * included.
+ */
+export function wallPhotoCounts(
+  point1: [number, number],
+  point2: [number, number],
+  minAltitude: number,
+  maxAltitude: number,
+  spacingM = DEFAULT_FACADE_SPACING.horizontalM,
+): { numRows: number; numColumns: number } {
+  const lengthM = haversine(point1[0], point1[1], point2[0], point2[1]);
+  const span = Math.abs(maxAltitude - minAltitude);
+  const step = Math.max(0.5, spacingM);
+  return {
+    numColumns: Math.max(2, Math.round(lengthM / step) + 1),
+    numRows: Math.max(1, Math.round(span / step) + 1),
+  };
+}
+
 export function generateFacade(
   params: FacadeParams,
   availablePois: TemplatePoi[] = [],
@@ -1155,15 +1178,24 @@ export function generateFacade(
   // Perpendicular: offset 90° to the right of the wall direction
   const offsetBearing = (wallBearing + 90) % 360;
 
-  // Generate the scan grid along the wall
-  for (let row = 0; row < numRows; row++) {
+  // Generate the scan grid along the wall. Stop at the same cap as the
+  // other facade plans so a long wall cannot run past it.
+  for (
+    let row = 0;
+    row < numRows && waypoints.length < MAX_SURVEY_WAYPOINTS;
+    row++
+  ) {
     const altFraction = numRows <= 1 ? 0 : row / (numRows - 1);
     const alt = Math.round(
       minAltitude + altFraction * (maxAltitude - minAltitude),
     );
     const reverse = row % 2 === 1; // zigzag
 
-    for (let col = 0; col < numColumns; col++) {
+    for (
+      let col = 0;
+      col < numColumns && waypoints.length < MAX_SURVEY_WAYPOINTS;
+      col++
+    ) {
       const colIdx = reverse ? numColumns - 1 - col : col;
       const colFraction = numColumns <= 1 ? 0 : colIdx / (numColumns - 1);
 

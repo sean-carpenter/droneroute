@@ -42,9 +42,9 @@ const suggestion = z.object({
   sideOverlap: z.number().min(0.1).max(0.95).optional(),
   forwardOverlap: z.number().min(0.1).max(0.95).optional(),
   crossHatch: z.boolean().optional(),
-  standoffM: z.number().min(3).max(500).optional(),
-  minAltitudeM: z.number().min(2).max(500).optional(),
-  maxAltitudeM: z.number().min(2).max(500).optional(),
+  standoffM: z.number().min(1).max(500).optional(),
+  minAltitudeM: z.number().min(1).max(500).optional(),
+  maxAltitudeM: z.number().min(1).max(500).optional(),
 });
 
 /** Field-by-field schema, also used as the MCP tool's input schema. */

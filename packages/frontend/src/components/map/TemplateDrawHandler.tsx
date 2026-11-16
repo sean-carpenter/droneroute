@@ -23,6 +23,7 @@ import {
   generateTower,
   generateBoundaryFacade,
   pointOnRay,
+  wallPhotoCounts,
   DEFAULT_TOWER_PARAMS,
   DEFAULT_ORBIT_PARAMS,
   DEFAULT_GRID_PARAMS,
@@ -293,6 +294,12 @@ export function TemplateDrawHandler() {
             ...DEFAULT_FACADE_PARAMS,
             point1: finalDrag.start,
             point2: finalDrag.end,
+            ...wallPhotoCounts(
+              finalDrag.start,
+              finalDrag.end,
+              DEFAULT_FACADE_PARAMS.minAltitude,
+              DEFAULT_FACADE_PARAMS.maxAltitude,
+            ),
           });
         }
       } else if (tm === "tower") {
@@ -440,6 +447,12 @@ export function TemplateDrawHandler() {
         ...DEFAULT_FACADE_PARAMS,
         point1: dragState.start,
         point2: dragState.end,
+        ...wallPhotoCounts(
+          dragState.start,
+          dragState.end,
+          DEFAULT_FACADE_PARAMS.minAltitude,
+          DEFAULT_FACADE_PARAMS.maxAltitude,
+        ),
       });
     }
     if (templateMode === "tower") {

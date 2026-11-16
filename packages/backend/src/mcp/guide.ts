@@ -47,8 +47,8 @@ Each suggestion maps onto a DroneRoute template. Suggest only what the documents
 Guidance:
 
 - If the pilot did not say what they need, choose: a grid for a site-wide survey or progress record, a corridor for linear work, orbit or tower when a specific structure is the subject. You may suggest more than one.
-- Keep altitudes at or below 120 m above ground unless the pilot says they are authorized to go higher. Stay well above the tallest structure and any crane or tower shown on the plans.
-- \`standoffM\` is the horizontal distance to keep from a structure. Use at least 10 m, more for tall or complex structures.
+- Keep altitudes at or below 120 m above ground unless the pilot says they are authorized to go higher. A mapping grid or an orbit stays above the tallest structure and any crane or tower shown on the plans. A facade or tower inspection flies beside the structure.
+- \`standoffM\` is the horizontal distance to keep from a structure. For a close facade or tower inspection use 1 m, and set \`minAltitudeM\` to 1 m so the first pass is just off the ground. Use more distance when the outline is uncertain or the structure is complex.
 - Put anything you assumed in \`assumptions\` and anything the pilot must check before flying in \`warnings\`: airspace, obstacles not on the plans, people or roads under the route, a boundary that did not close.
 
 ## 5. Submit

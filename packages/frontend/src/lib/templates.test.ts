@@ -22,6 +22,7 @@ import {
   generateBoundaryFacade,
   generateFacade,
   generateOrbit,
+  wallPhotoCounts,
   generatePencil,
   generateTower,
   offsetPolygon,
@@ -230,15 +231,9 @@ describe("generateFacade — camera aim", () => {
     ...(aim ? { aim } : {}),
   });
 
-  it("aims at the wall base by default, steeper as the drone climbs", () => {
+  it("looks straight at the wall by default", () => {
     const { waypoints } = generateFacade(facade());
-    for (const wp of waypoints) {
-      const expected = -Math.round((Math.atan2(wp.height, 20) * 180) / Math.PI);
-      expect(Math.abs(wp.gimbalPitchAngle - expected)).toBeLessThanOrEqual(1);
-    }
-    const byRow = [0, 3, 6, 9].map((i) => waypoints[i].gimbalPitchAngle);
-    expect(byRow).toEqual([...byRow].sort((a, b) => b - a));
-    expect(byRow[0]).toBeGreaterThan(byRow[3]);
+    expect(waypoints.every((wp) => wp.gimbalPitchAngle === 0)).toBe(true);
   });
 
   it("levels off at a target height band on the wall", () => {
@@ -295,6 +290,24 @@ describe("generateFacade — camera aim", () => {
     const params = facade({ mode: "structureHeight", height: 15 });
     expect(generateFacade(params)).toEqual(generateFacade(params));
   });
+
+  it("places photos about 1 m apart and stops at the waypoint cap", () => {
+    const point1 = eastOf(0);
+    const point2 = eastOf(40);
+    const counts = wallPhotoCounts(point1, point2, 1, 30, 1);
+    expect(counts.numColumns).toBe(41);
+    expect(counts.numRows).toBe(30);
+
+    const { waypoints } = generateFacade({
+      ...DEFAULT_FACADE_PARAMS,
+      point1,
+      point2: eastOf(3000),
+      numRows: 40,
+      numColumns: 100,
+    });
+    expect(waypoints).toHaveLength(MAX_SURVEY_WAYPOINTS);
+    expect(waypoints.every((wp) => Math.abs(wp.height) >= 1)).toBe(true);
+  });
 });
 
 describe("generateOrbit — camera aim", () => {
@@ -346,7 +359,7 @@ describe("generateTower", () => {
   it("climbs continuously in helix style", () => {
     const { waypoints, pois } = generateTower(tower());
     expect(waypoints).toHaveLength(4 * 8 + 1);
-    expect(waypoints[0].height).toBe(10);
+    expect(waypoints[0].height).toBe(1);
     expect(waypoints.at(-1)!.height).toBe(50);
     for (let i = 1; i < waypoints.length; i++) {
       expect(waypoints[i].height).toBeGreaterThan(waypoints[i - 1].height);
@@ -365,7 +378,7 @@ describe("generateTower", () => {
       tower({ style: "stacked", turns: 3, pointsPerTurn: 6 }),
     );
     expect(waypoints).toHaveLength(3 * 7);
-    expect([...new Set(waypoints.map((w) => w.height))]).toEqual([10, 30, 50]);
+    expect([...new Set(waypoints.map((w) => w.height))]).toEqual([1, 25.5, 50]);
     // Each ring ends where it started
     expect(waypoints[6].latitude).toBeCloseTo(waypoints[0].latitude, 9);
     expect(waypoints[6].longitude).toBeCloseTo(waypoints[0].longitude, 9);
@@ -682,21 +695,21 @@ describe("polygonFacadeAround", () => {
     const params = polygonFacadeAround(square, 8);
     expect(params.boundary).toBe("polygon");
     expect(params.vertices).toEqual(square);
-    expect(params.minAltitude).toBe(2);
+    expect(params.minAltitude).toBe(1);
     expect(params.maxAltitude).toBe(13); // height + 5
-    expect(params.aim).toEqual({ mode: "structureHeight", height: 4 });
+    expect(params.aim).toEqual({ mode: "relativeToSurface", offsetDeg: 0 });
   });
 
   it("falls back to the defaults without a height", () => {
     const params = polygonFacadeAround(square, null);
     expect(params.minAltitude).toBe(DEFAULT_POLYGON_FACADE.minAltitude);
     expect(params.maxAltitude).toBe(DEFAULT_POLYGON_FACADE.maxAltitude);
-    expect(params.aim.mode).toBe("structureHeight");
+    expect(params.aim).toEqual({ mode: "relativeToSurface", offsetDeg: 0 });
   });
 
   it("keeps a usable band for a tall structure", () => {
     const params = polygonFacadeAround(square, 60);
-    expect(params.minAltitude).toBe(10); // capped at the default
+    expect(params.minAltitude).toBe(1); // the default, just off the ground
     expect(params.maxAltitude).toBe(65);
   });
 });

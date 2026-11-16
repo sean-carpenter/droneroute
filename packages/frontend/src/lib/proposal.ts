@@ -14,6 +14,7 @@ import {
   DEFAULT_GRID_PARAMS,
   DEFAULT_ORBIT_PARAMS,
   polygonFacadeAround,
+  wallPhotoCounts,
   DEFAULT_TOWER_PARAMS,
   boundaryCorners,
   fromLocal,
@@ -127,7 +128,7 @@ export type TemplateSeed =
   /** A wall scan, or — with boundary params — a path around an outline. */
   | { type: "facade"; params: FacadeParams | BoundaryFacadeParams };
 
-const DEFAULT_STANDOFF_M = 15;
+const DEFAULT_STANDOFF_M = 1;
 const DEFAULT_FOOTPRINT_RADIUS_M = 10;
 
 /**
@@ -211,18 +212,22 @@ export function suggestionToSeed(
       }
       const minAltitude =
         suggestion.minAltitudeM ?? DEFAULT_FACADE_PARAMS.minAltitude;
+      const point1 = alignment.path[0];
+      const point2 = alignment.path[alignment.path.length - 1];
+      const maxAltitude = Math.max(
+        minAltitude + 5,
+        suggestion.maxAltitudeM ?? DEFAULT_FACADE_PARAMS.maxAltitude,
+      );
       return {
         type: "facade",
         params: {
           ...DEFAULT_FACADE_PARAMS,
-          point1: alignment.path[0],
-          point2: alignment.path[alignment.path.length - 1],
+          point1,
+          point2,
           distanceM: suggestion.standoffM ?? DEFAULT_FACADE_PARAMS.distanceM,
           minAltitude,
-          maxAltitude: Math.max(
-            minAltitude + 5,
-            suggestion.maxAltitudeM ?? DEFAULT_FACADE_PARAMS.maxAltitude,
-          ),
+          maxAltitude,
+          ...wallPhotoCounts(point1, point2, minAltitude, maxAltitude),
         },
       };
     }
@@ -277,11 +282,6 @@ export function suggestionToSeed(
           radiusM,
           minAltitude,
           maxAltitude,
-          aim: {
-            mode: "structureHeight",
-            height:
-              Math.round(((height ?? minAltitude + maxAltitude) / 2) * 10) / 10,
-          },
         },
       };
     }

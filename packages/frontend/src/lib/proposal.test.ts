@@ -152,8 +152,12 @@ describe("suggestionToSeed", () => {
     expect(seed?.type).toBe("tower");
     if (seed?.type !== "tower") return;
     expect(seed.params.maxAltitude).toBe(35);
-    expect(seed.params.radiusM).toBe(21);
-    expect(seed.params.aim).toEqual({ mode: "structureHeight", height: 15 });
+    expect(seed.params.radiusM).toBe(7); // footprint 6 m plus 1 m
+    expect(seed.params.minAltitude).toBe(1);
+    expect(seed.params.aim).toEqual({
+      mode: "relativeToSurface",
+      offsetDeg: 0,
+    });
   });
 
   it("seeds a facade from the ends of an alignment", () => {
@@ -210,7 +214,11 @@ describe("suggestionToSeed", () => {
     expect(seed.params.vertices).toEqual(footprint);
     expect(seed.params.standoffM).toBe(12);
     expect(seed.params.maxAltitude).toBe(35); // structure height 30 + 5
-    expect(seed.params.aim).toEqual({ mode: "structureHeight", height: 15 });
+    expect(seed.params.minAltitude).toBe(1);
+    expect(seed.params.aim).toEqual({
+      mode: "relativeToSurface",
+      offsetDeg: 0,
+    });
   });
 
   it("returns null for a facade on a structure without a footprint", () => {
