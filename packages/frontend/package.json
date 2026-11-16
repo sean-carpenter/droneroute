@@ -25,6 +25,7 @@
     "clsx": "^2.1.1",
     "lucide-react": "^1.17.0",
     "mapbox-gl": "^3.24.0",
+    "pdfjs-dist": "5.4.624",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-map-gl": "^8.1.1",

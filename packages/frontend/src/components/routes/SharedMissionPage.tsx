@@ -28,6 +28,7 @@ import type {
   MissionConfig,
   PointOfInterest,
   Obstacle,
+  SiteDrawing,
   SiteFeature,
 } from "@droneroute/shared";
 
@@ -43,6 +44,7 @@ interface SharedMissionData {
   pois: PointOfInterest[];
   obstacles: Obstacle[];
   siteFeatures?: SiteFeature[];
+  drawings?: SiteDrawing[];
 }
 
 function haversine(
@@ -354,6 +356,7 @@ export function SharedMissionPage({
       pois: mission.pois,
       obstacles: mission.obstacles,
       siteFeatures: mission.siteFeatures,
+      drawings: mission.drawings,
     });
     window.history.pushState({}, "", "/");
     setCurrentPage("editor");
@@ -378,6 +381,7 @@ export function SharedMissionPage({
         pois: mission.pois,
         obstacles: mission.obstacles,
         siteFeatures: mission.siteFeatures,
+        drawings: mission.drawings,
       });
       window.history.pushState({}, "", "/");
       setCurrentPage("editor");

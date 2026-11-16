@@ -322,3 +322,75 @@ describe("site features", () => {
     ).toBe("invalid site feature name");
   });
 });
+
+describe("drawings", () => {
+  const drawing = (overrides: Record<string, unknown> = {}) => ({
+    id: "d1",
+    name: "Site plan",
+    image: "data:image/png;base64,iVBORw0KGgo=",
+    widthPx: 3600,
+    heightPx: 2400,
+    center: [42.559, -71.078],
+    widthM: 60,
+    rotationDeg: 12.5,
+    opacity: 0.7,
+    visible: true,
+    ...overrides,
+  });
+  const withDrawings = (drawings: unknown) => ({ ...validCreate, drawings });
+
+  it("accepts well-formed drawings, PNG or JPEG", () => {
+    expect(validateMissionCreate(withDrawings([drawing()]))).toBeNull();
+    expect(
+      validateMissionCreate(
+        withDrawings([drawing({ image: "data:image/jpeg;base64,/9j/4AAQ" })]),
+      ),
+    ).toBeNull();
+    expect(validateMissionUpdate({ drawings: [] })).toBeNull();
+  });
+
+  it("rejects anything but a PNG or JPEG data URL", () => {
+    for (const image of [
+      "https://example.com/plan.png",
+      "data:image/svg+xml;base64,PHN2Zz4=",
+      "data:text/html;base64,PGgxPg==",
+      "data:image/png;base64,<script>",
+      "x".repeat(10),
+    ]) {
+      expect(validateMissionCreate(withDrawings([drawing({ image })]))).toBe(
+        "a drawing image must be a PNG or JPEG data URL under 12 MB",
+      );
+    }
+  });
+
+  it("rejects out-of-range placement", () => {
+    expect(
+      validateMissionCreate(withDrawings([drawing({ center: [91, 0] })])),
+    ).toBe("drawing center out of range");
+    expect(
+      validateMissionCreate(withDrawings([drawing({ widthM: 0.5 })])),
+    ).toBe("drawing width must be 1 to 5000 m");
+    expect(
+      validateMissionCreate(withDrawings([drawing({ widthM: Number.NaN })])),
+    ).toBe("drawing width must be 1 to 5000 m");
+    expect(
+      validateMissionCreate(withDrawings([drawing({ opacity: 1.5 })])),
+    ).toBe("drawing opacity must be 0 to 1");
+    expect(
+      validateMissionCreate(withDrawings([drawing({ widthPx: 5000 })])),
+    ).toBe("invalid drawing pixel size");
+    expect(
+      validateMissionCreate(withDrawings([drawing({ visible: "yes" })])),
+    ).toBe("invalid drawing visibility");
+    expect(validateMissionUpdate({ drawings: {} })).toBe(
+      "drawings must be an array",
+    );
+    expect(
+      validateMissionUpdate({
+        drawings: Array.from({ length: 11 }, (_, i) =>
+          drawing({ id: `d${i}` }),
+        ),
+      }),
+    ).toBe("too many drawings");
+  });
+});

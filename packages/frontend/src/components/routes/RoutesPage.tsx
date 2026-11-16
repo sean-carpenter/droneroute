@@ -1,4 +1,4 @@
-import { kmzFileName } from "@droneroute/shared";
+import { kmzFileName, type Mission } from "@droneroute/shared";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import {
@@ -184,6 +184,9 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
       const siteFeatures = mission.site_features
         ? JSON.parse(mission.site_features)
         : [];
+      // Drawings are large, so the list leaves them out: fetch them now.
+      // Opening without them would drop them on the next save.
+      const { drawings } = await api.get<Mission>(`/missions/${mission.id}`);
       loadMission({
         id: mission.id,
         name: mission.name,
@@ -192,6 +195,7 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
         pois,
         obstacles,
         siteFeatures,
+        drawings: drawings ?? [],
       });
       setCurrentPage("editor");
     } catch (e) {

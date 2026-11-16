@@ -5,6 +5,7 @@ import type {
   WaypointAction,
   PointOfInterest,
   Obstacle,
+  SiteDrawing,
   SiteFeature,
   SiteFeatureKind,
 } from "@droneroute/shared";
@@ -29,6 +30,7 @@ export interface MissionSnapshot {
   pois: PointOfInterest[];
   obstacles: Obstacle[];
   siteFeatures: SiteFeature[];
+  drawings: SiteDrawing[];
 }
 
 /** Maximum number of undo steps kept. */
@@ -65,6 +67,11 @@ interface MissionState {
   selectedSiteFeatureId: string | null;
   /** Set while the obstacle drawing tool is drawing a site feature instead. */
   drawingSiteFeatureKind: SiteFeatureKind | null;
+
+  // Drawings laid over the map (site plans to trace)
+  drawings: SiteDrawing[];
+  /** The drawing whose move, resize and rotate handles are showing. */
+  selectedDrawingId: string | null;
 
   // History
   past: MissionSnapshot[];
@@ -169,6 +176,16 @@ interface MissionState {
   startDrawingSiteFeature: (kind: SiteFeatureKind) => void;
   setDrawingVertices: (vertices: [number, number][]) => void;
 
+  // Drawing actions
+  /** Adds the drawing, selects it and returns its id. */
+  addDrawing: (drawing: Omit<SiteDrawing, "id">) => string;
+  updateDrawing: (
+    id: string,
+    updates: Partial<Omit<SiteDrawing, "id">>,
+  ) => void;
+  removeDrawing: (id: string) => void;
+  selectDrawing: (id: string | null) => void;
+
   // Mission actions
   /** Add imported waypoints/POIs to the end of the current mission. */
   appendImported: (waypoints: Waypoint[], pois?: PointOfInterest[]) => void;
@@ -180,6 +197,7 @@ interface MissionState {
     pois?: PointOfInterest[];
     obstacles?: Obstacle[];
     siteFeatures?: SiteFeature[];
+    drawings?: SiteDrawing[];
   }) => void;
   clearMission: () => void;
   setDirty: (dirty: boolean) => void;
@@ -191,6 +209,7 @@ const CLEARED_SELECTION = {
   selectedPoiId: null,
   selectedObstacleId: null,
   selectedSiteFeatureId: null,
+  selectedDrawingId: null,
 };
 
 function snapshotOf(state: MissionSnapshot): MissionSnapshot {
@@ -202,6 +221,7 @@ function snapshotOf(state: MissionSnapshot): MissionSnapshot {
     pois: state.pois,
     obstacles: state.obstacles,
     siteFeatures: state.siteFeatures,
+    drawings: state.drawings,
   };
 }
 
@@ -212,6 +232,7 @@ function documentChanged(a: MissionSnapshot, b: MissionSnapshot): boolean {
     a.pois !== b.pois ||
     a.obstacles !== b.obstacles ||
     a.siteFeatures !== b.siteFeatures ||
+    a.drawings !== b.drawings ||
     a.config !== b.config ||
     a.missionName !== b.missionName
   );
@@ -238,6 +259,8 @@ export const useMissionStore = create<MissionState>((set, get) => ({
   siteFeatures: [],
   selectedSiteFeatureId: null,
   drawingSiteFeatureKind: null,
+  drawings: [],
+  selectedDrawingId: null,
   isAddingWaypoint: true,
   isAddingPoi: false,
   templateMode: null,
@@ -763,6 +786,35 @@ export const useMissionStore = create<MissionState>((set, get) => ({
     set({ drawingSiteFeatureKind: kind, selectedSiteFeatureId: null });
   },
 
+  // Drawing actions
+  addDrawing: (drawing) => {
+    const id = newId();
+    set((state) => ({
+      drawings: [...state.drawings, { ...drawing, id }],
+      selectedDrawingId: id,
+      dirty: true,
+    }));
+    return id;
+  },
+
+  updateDrawing: (id, updates) =>
+    set((state) => ({
+      drawings: state.drawings.map((d) =>
+        d.id === id ? { ...d, ...updates } : d,
+      ),
+      dirty: true,
+    })),
+
+  removeDrawing: (id) =>
+    set((state) => ({
+      drawings: state.drawings.filter((d) => d.id !== id),
+      selectedDrawingId:
+        state.selectedDrawingId === id ? null : state.selectedDrawingId,
+      dirty: true,
+    })),
+
+  selectDrawing: (id) => set({ selectedDrawingId: id }),
+
   setTemplateMode: (mode) =>
     set({
       templateMode: mode,
@@ -845,6 +897,8 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       pois: data.pois || [],
       obstacles: data.obstacles || [],
       siteFeatures: data.siteFeatures || [],
+      drawings: data.drawings || [],
+      selectedDrawingId: null,
       selectedWaypointIndices: new Set<number>(),
       lastSelectedWaypointIndex: null,
       selectedPoiId: null,
@@ -865,6 +919,8 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       pois: [],
       obstacles: [],
       siteFeatures: [],
+      drawings: [],
+      selectedDrawingId: null,
       selectedWaypointIndices: new Set<number>(),
       lastSelectedWaypointIndex: null,
       selectedPoiId: null,

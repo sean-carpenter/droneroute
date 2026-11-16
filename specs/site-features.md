@@ -16,9 +16,24 @@ Draw the buildings and areas of a site on the map — the existing building, a g
 - **Remove** a feature with the X in the list.
 - Undo and redo cover every change.
 
+## Drawings
+
+Lay a drawing, such as the site plan from a permit set, over the map to line it up with the satellite view and trace buildings from it.
+
+- **Add** a drawing: drag a one-page PDF onto the editor, or press **Add drawing** in the **Site** section. It appears see-through in the middle of the map, with its handles showing.
+- **Line it up**: drag the middle handle to move it, a corner to resize it (its proportions stay the same) and the round handle above it to rotate it. For exact numbers, type the sheet's width on the ground in meters and its rotation in degrees.
+- **See-through**: the slider sets how strongly the drawing shows. The white paper is always clear, so only the lines cover the map.
+- Press **Adjust** to show the handles again, and **Done** to hide them. The eye icon hides a drawing without removing it, and the X removes it.
+- Then draw the buildings over it as usual with **Draw**.
+
 ## Good to know
 
 - Features are saved with the mission, copied when a mission is shared or cloned, and opened with it.
+- Drawings are saved with the mission too, copied with it when it is duplicated, shared or cloned, and opened with it. Each sheet's width, rotation and see-through setting are kept.
+- Only one-page PDFs can be added for now; a multi-page set is refused with a message. A mission holds up to 10 drawings.
+- The PDF is drawn into an image in your browser; the PDF itself is not uploaded or kept.
+- On the satellite and dark maps the drawing's lines show white, so black ink stays visible; on the street map they keep their own colors.
+- Drawings are not written to the exported KMZ.
 - Buildings count as obstacles by default: a route that enters or crosses one gets the same warnings and red legs as a drawn obstacle, and with a height set, a route well above it is reported as passing over. A lot is not an obstacle by default. Turn this on or off per feature.
 - Changing a feature's kind also changes its color and name, unless you changed those yourself.
 - Site features are not written to the exported KMZ.

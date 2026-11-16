@@ -8,6 +8,8 @@
  * type-confusion). Each validator returns an error string, or `null` when valid.
  */
 
+import { SITE_DRAWING_LIMITS } from "@droneroute/shared";
+
 const MAX_NAME_LEN = 200;
 const MAX_WAYPOINTS = 5000;
 const MAX_POIS = 2000;
@@ -18,6 +20,7 @@ const MAX_SITE_FEATURES = 200;
 const MAX_VERTICES_PER_FEATURE = 500;
 const SITE_FEATURE_KINDS = ["existing", "garage", "addition", "lot", "other"];
 const COLOR = /^#[0-9a-fA-F]{6}$/;
+const DRAWING_IMAGE = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/;
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
@@ -136,6 +139,7 @@ export interface MissionPayload {
   pois?: unknown;
   obstacles?: unknown;
   siteFeatures?: unknown;
+  drawings?: unknown;
 }
 
 /** Checks the buildings, lot and other areas drawn on the site. */
@@ -220,6 +224,70 @@ function validateTakeoff(config: Record<string, unknown>): string | null {
   return null;
 }
 
+/** Checks the drawings laid over the map: placement numbers and the image itself. */
+function validateDrawings(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (!Array.isArray(value)) return "drawings must be an array";
+  if (value.length > SITE_DRAWING_LIMITS.maxDrawings)
+    return "too many drawings";
+  for (const drawing of value) {
+    if (!isPlainObject(drawing)) return "invalid drawing";
+    if (typeof drawing.id !== "string" || drawing.id.length === 0) {
+      return "invalid drawing id";
+    }
+    if (!isValidName(drawing.name)) return "invalid drawing name";
+    if (
+      typeof drawing.image !== "string" ||
+      drawing.image.length > SITE_DRAWING_LIMITS.maxImageChars ||
+      !DRAWING_IMAGE.test(drawing.image)
+    ) {
+      return "a drawing image must be a PNG or JPEG data URL under 12 MB";
+    }
+    for (const side of [drawing.widthPx, drawing.heightPx]) {
+      if (
+        !Number.isInteger(side) ||
+        (side as number) < 1 ||
+        (side as number) > SITE_DRAWING_LIMITS.maxImagePx
+      ) {
+        return "invalid drawing pixel size";
+      }
+    }
+    const center = drawing.center;
+    if (
+      !Array.isArray(center) ||
+      center.length !== 2 ||
+      !isLatitude(center[0]) ||
+      !isLongitude(center[1])
+    ) {
+      return "drawing center out of range";
+    }
+    if (
+      !isFiniteNumber(drawing.widthM) ||
+      drawing.widthM < SITE_DRAWING_LIMITS.minWidthM ||
+      drawing.widthM > SITE_DRAWING_LIMITS.maxWidthM
+    ) {
+      return "drawing width must be 1 to 5000 m";
+    }
+    if (
+      !isFiniteNumber(drawing.rotationDeg) ||
+      drawing.rotationDeg < -360 ||
+      drawing.rotationDeg > 360
+    ) {
+      return "invalid drawing rotation";
+    }
+    if (
+      !isFiniteNumber(drawing.opacity) ||
+      drawing.opacity < 0 ||
+      drawing.opacity > 1
+    ) {
+      return "drawing opacity must be 0 to 1";
+    }
+    if (typeof drawing.visible !== "boolean")
+      return "invalid drawing visibility";
+  }
+  return null;
+}
+
 /** Validate a full mission-create payload. Returns an error message or null. */
 export function validateMissionCreate(body: MissionPayload): string | null {
   if (!isValidName(body.name)) return "invalid mission name";
@@ -230,7 +298,8 @@ export function validateMissionCreate(body: MissionPayload): string | null {
     validateWaypoints(body.waypoints) ??
     validatePois(body.pois) ??
     validateObstacles(body.obstacles) ??
-    validateSiteFeatures(body.siteFeatures)
+    validateSiteFeatures(body.siteFeatures) ??
+    validateDrawings(body.drawings)
   );
 }
 
@@ -254,7 +323,8 @@ export function validateMissionUpdate(body: MissionPayload): string | null {
   return (
     validatePois(body.pois) ??
     validateObstacles(body.obstacles) ??
-    validateSiteFeatures(body.siteFeatures)
+    validateSiteFeatures(body.siteFeatures) ??
+    validateDrawings(body.drawings)
   );
 }
 

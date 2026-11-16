@@ -259,3 +259,63 @@ describe("site features", () => {
     expect(store().siteFeatures).toEqual([]);
   });
 });
+
+describe("drawings", () => {
+  const drawing = {
+    name: "Site plan",
+    image: "data:image/png;base64,iVBORw0KGgo=",
+    widthPx: 3600,
+    heightPx: 2400,
+    center: [42.559, -71.078] as [number, number],
+    widthM: 60,
+    rotationDeg: 0,
+    opacity: 0.7,
+    visible: true,
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    store().clearMission();
+    store().clearHistory();
+    tick();
+  });
+
+  it("adds, selects, updates and removes a drawing, each undoable", () => {
+    const id = store().addDrawing(drawing);
+    expect(store().drawings).toEqual([{ ...drawing, id }]);
+    expect(store().selectedDrawingId).toBe(id);
+    expect(store().dirty).toBe(true);
+
+    tick();
+    store().updateDrawing(id, { rotationDeg: 15, widthM: 72 });
+    expect(store().drawings[0]).toMatchObject({ rotationDeg: 15, widthM: 72 });
+
+    tick();
+    store().undo();
+    expect(store().drawings[0]).toMatchObject({ rotationDeg: 0, widthM: 60 });
+    store().redo();
+    expect(store().drawings[0].rotationDeg).toBe(15);
+
+    tick();
+    store().removeDrawing(id);
+    expect(store().drawings).toEqual([]);
+    store().undo();
+    expect(store().drawings).toHaveLength(1);
+  });
+
+  it("is loaded with a mission and cleared with it", () => {
+    store().loadMission({
+      name: "Saved",
+      config: store().config,
+      waypoints: [],
+      drawings: [{ ...drawing, id: "d1" }],
+    });
+    expect(store().drawings).toHaveLength(1);
+    expect(store().selectedDrawingId).toBeNull();
+    expect(store().past).toHaveLength(0);
+
+    store().clearMission();
+    expect(store().drawings).toEqual([]);
+  });
+});

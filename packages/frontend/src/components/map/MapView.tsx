@@ -31,6 +31,8 @@ import {
   siteFeatureIdFromLayerId,
 } from "./SiteFeaturePolygon";
 import { AirspaceOverlay } from "./AirspaceOverlay";
+import { DrawingOverlay, DrawingsAnchor } from "./DrawingOverlay";
+import { setMainMap } from "@/lib/mainMap";
 import { CameraFrustum } from "./CameraFrustum";
 import { BoxSelectHandler } from "./BoxSelectHandler";
 import { WindPanel } from "./WindPanel";
@@ -155,6 +157,17 @@ function SceneSetup({ is3D, mapStyle }: { is3D: boolean; mapStyle: string }) {
     }
   }, [map, is3D]);
 
+  return null;
+}
+
+/** Lets code outside the map tree ask what is on screen (see lib/mainMap). */
+function MainMapRegistry() {
+  const { current: map } = useMap();
+  useEffect(() => {
+    if (!map) return;
+    setMainMap(map.getMap());
+    return () => setMainMap(null);
+  }, [map]);
   return null;
 }
 
@@ -504,6 +517,7 @@ export function MapView() {
   const addObstacle = useMissionStore((s) => s.addObstacle);
   const addSiteFeature = useMissionStore((s) => s.addSiteFeature);
   const selectSiteFeature = useMissionStore((s) => s.selectSiteFeature);
+  const drawings = useMissionStore((s) => s.drawings);
   const simulating = useSimulationStore((s) => s.active);
   const vizPrefs = usePreferencesStore((s) => s.preferences?.visualization);
   const [mapStyle, setMapStyle] = useState(
@@ -641,6 +655,20 @@ export function MapView() {
           tileSize={512}
           maxzoom={14}
         />
+        {/* First of our layers: drawings go just below it, under everything else */}
+        <DrawingsAnchor />
+        {drawings
+          .filter((d) => d.visible)
+          .map((d) => (
+            <DrawingOverlay
+              key={d.id}
+              drawing={d}
+              lightLines={
+                mapStyle.includes("satellite") || mapStyle.includes("dark")
+              }
+            />
+          ))}
+        <MainMapRegistry />
         <FitBoundsOnLoad />
         <GeocoderControl />
         <SceneSetup is3D={is3D} mapStyle={mapStyle} />

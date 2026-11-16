@@ -270,6 +270,46 @@ export const SITE_FEATURE_KINDS: Record<
   other: { label: "Other", color: "#a78bfa", isObstacle: true },
 };
 
+// ── Site drawing ─────────────────────────────────────────
+
+/**
+ * A drawing (a site plan, say) laid over the map as a see-through image, so
+ * its buildings can be lined up with the satellite view and traced. The image
+ * keeps its proportions: it is placed by its center, ground width and
+ * rotation.
+ */
+export interface SiteDrawing {
+  id: string;
+  /** Shown in the list; the file name without its extension. */
+  name: string;
+  /** The rendered page as a `data:image/png;base64,...` or `data:image/jpeg;base64,...` URL. */
+  image: string;
+  /** Pixel size of `image`; fixes its proportions. */
+  widthPx: number;
+  heightPx: number;
+  /** [latitude, longitude] of the image's center. */
+  center: [number, number];
+  /** Width of the whole image on the ground, in meters. */
+  widthM: number;
+  /** Clockwise from north: 0 keeps the top of the sheet facing north. */
+  rotationDeg: number;
+  /** 0 (invisible) to 1 (opaque). */
+  opacity: number;
+  /** Hidden drawings stay in the mission but are not drawn on the map. */
+  visible: boolean;
+}
+
+/** Limits shared by the editor and the server. */
+export const SITE_DRAWING_LIMITS = {
+  maxDrawings: 10,
+  /** Longest side of a rendered page, in pixels. */
+  maxImagePx: 4096,
+  /** Length of one image data URL, in characters. */
+  maxImageChars: 12_000_000,
+  minWidthM: 1,
+  maxWidthM: 5000,
+} as const;
+
 // ── Waypoint ─────────────────────────────────────────────
 
 export interface Waypoint {
@@ -370,6 +410,7 @@ export interface Mission {
   pois: PointOfInterest[];
   obstacles: Obstacle[];
   siteFeatures?: SiteFeature[];
+  drawings?: SiteDrawing[];
 }
 
 // ── Shared Mission ──────────────────────────────────────
@@ -386,6 +427,7 @@ export interface SharedMission {
   pois: PointOfInterest[];
   obstacles: Obstacle[];
   siteFeatures?: SiteFeature[];
+  drawings?: SiteDrawing[];
 }
 
 // ── Route proposals (drafted by an AI agent, reviewed by the user) ──────

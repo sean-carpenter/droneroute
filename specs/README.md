@@ -7,7 +7,7 @@ Everything DroneRoute can do, explained in plain language.
 - [Mission planning](mission-planning.md) — place and configure waypoints for your drone flight
 - [Points of interest](points-of-interest.md) — mark targets on the map and aim the camera automatically
 - [Templates](templates.md) — generate common flight patterns with a few clicks
-- [Site features](site-features.md) — draw the buildings, lot and other areas of a site as colored, editable shapes
+- [Site features](site-features.md) — draw the buildings, lot and other areas of a site as colored, editable shapes, and lay a PDF drawing over the map to trace them from
 - [Obstacles](obstacles.md) — draw no-fly zones and get warnings
 - [Mission settings](mission-settings.md) — choose your drone, camera, altitude mode, and safety options
 - [Map and visualization](map-and-visualization.md) — the interactive map and flight path display

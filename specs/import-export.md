@@ -25,7 +25,7 @@ To take a mission to DJI FlightHub 2, click **FlightHub 2** instead of **Export 
 
 ### Importing
 
-1. Click the import button, or drag a file onto the page.
+1. Click the import button, or drag a file onto the page. (Dropping a one-page PDF instead lays it over the map as a [drawing](site-features.md#drawings).)
 2. Select a KMZ, KML, GPX or CSV file from your computer.
 3. An **import preview** shows the detected format, how many waypoints, POIs and photo actions were found, and any warnings (for example, heights that had to be assumed).
 4. Choose **Replace mission** to load the file, or **Add to mission** to append its waypoints to the route you already have.

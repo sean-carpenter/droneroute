@@ -36,6 +36,9 @@ import { kmzFileName } from "@droneroute/shared";
 import { PoiList } from "@/components/mission/PoiList";
 import { ObstacleList } from "@/components/mission/ObstacleList";
 import { SiteFeatureList } from "@/components/mission/SiteFeatureList";
+import { DrawingList } from "@/components/mission/DrawingList";
+import { addDrawingWithFeedback } from "@/components/mission/addDrawingWithFeedback";
+import { isPdfFile } from "@/lib/drawingImport";
 import { RoutesPage } from "@/components/routes/RoutesPage";
 import { SharedMissionPage } from "@/components/routes/SharedMissionPage";
 import { AdminPage } from "@/pages/AdminPage";
@@ -85,6 +88,7 @@ export default function App() {
     pois,
     obstacles,
     siteFeatures,
+    drawings,
     loadMission,
     currentPage,
     setCurrentPage,
@@ -165,7 +169,8 @@ export default function App() {
         (waypoints.length > 1 ||
           pois.length > 0 ||
           obstacles.length > 0 ||
-          siteFeatures.length > 0)
+          siteFeatures.length > 0 ||
+          drawings.length > 0)
       ) {
         e.preventDefault();
       }
@@ -178,6 +183,7 @@ export default function App() {
     pois.length,
     obstacles.length,
     siteFeatures.length,
+    drawings.length,
   ]);
 
   // Obstacle warnings: drawn obstacles plus buildings marked as obstacles
@@ -399,6 +405,7 @@ export default function App() {
           pois,
           obstacles,
           siteFeatures,
+          drawings,
         });
       } else {
         const result = await api.post<{ id: string }>("/missions", {
@@ -408,6 +415,7 @@ export default function App() {
           pois,
           obstacles,
           siteFeatures,
+          drawings,
         });
         setMissionId(result.id);
       }
@@ -472,8 +480,16 @@ export default function App() {
       e.preventDefault();
       const file = e.dataTransfer?.files?.[0];
       if (!file) return;
+      // A PDF is a drawing to lay over the map, not a mission to import
+      if (isPdfFile(file)) {
+        setExpandedSections((prev) => ({ ...prev, site: true }));
+        void addDrawingWithFeedback(file);
+        return;
+      }
       if (!/\.(kmz|kml|gpx|csv)$/i.test(file.name)) {
-        toast.warning("Drop a KMZ, KML, GPX or Litchi CSV file to import");
+        toast.warning(
+          "Drop a KMZ, KML, GPX or Litchi CSV file to import, or a one-page PDF drawing",
+        );
         return;
       }
       void importFileRef.current(file);
@@ -816,6 +832,7 @@ export default function App() {
             </button>
             {expandedSections.site && (
               <div className="max-h-[35vh] overflow-y-auto section-expand">
+                <DrawingList />
                 <SiteFeatureList />
               </div>
             )}

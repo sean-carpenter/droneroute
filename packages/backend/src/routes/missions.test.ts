@@ -63,12 +63,13 @@ describe("POST /api/missions/:id/duplicate", () => {
     // The copy is verbatim, so any JSON will do here; skip create validation
     getDb()
       .prepare(
-        "UPDATE missions SET pois = ?, obstacles = ?, site_features = ?, share_token = ? WHERE id = ?",
+        "UPDATE missions SET pois = ?, obstacles = ?, site_features = ?, drawings = ?, share_token = ? WHERE id = ?",
       )
       .run(
         JSON.stringify([{ id: "p1", name: "Tower" }]),
         JSON.stringify([{ id: "o1", name: "Shed" }]),
         JSON.stringify([{ id: "s1", kind: "building" }]),
+        JSON.stringify([{ id: "d1", name: "Site plan" }]),
         "tok-original",
         id,
       );
@@ -91,6 +92,7 @@ describe("POST /api/missions/:id/duplicate", () => {
       "pois",
       "obstacles",
       "siteFeatures",
+      "drawings",
     ]) {
       expect(copy.body[key]).toEqual(orig.body[key]);
     }
@@ -152,6 +154,61 @@ describe("POST /api/missions — server-side validation", () => {
       .post("/api/missions")
       .set("Authorization", `Bearer ${token}`)
       .send({ ...validBody, waypoints: { not: "an array" } });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("drawings", () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+  const drawing = {
+    id: "d1",
+    name: "Site plan",
+    image: "data:image/png;base64,iVBORw0KGgo=",
+    widthPx: 3600,
+    heightPx: 2400,
+    center: [42.559, -71.078],
+    widthM: 60,
+    rotationDeg: 12.5,
+    opacity: 0.7,
+    visible: true,
+  };
+
+  it("saves drawings, returns them with the mission but not in the list", async () => {
+    const created = await request(app)
+      .post("/api/missions")
+      .set(auth(token))
+      .send({ ...validBody, name: "With drawing", drawings: [drawing] });
+    expect(created.status).toBe(201);
+    const id = created.body.id as string;
+
+    const one = await request(app).get(`/api/missions/${id}`).set(auth(token));
+    expect(one.body.drawings).toEqual([drawing]);
+
+    const list = await request(app).get("/api/missions").set(auth(token));
+    const row = list.body.find((m: { id: string }) => m.id === id);
+    expect(row).toBeDefined();
+    expect(row).not.toHaveProperty("drawings");
+
+    const moved = { ...drawing, rotationDeg: 90 };
+    const updated = await request(app)
+      .put(`/api/missions/${id}`)
+      .set(auth(token))
+      .send({ drawings: [moved] });
+    expect(updated.status).toBe(200);
+    const again = await request(app)
+      .get(`/api/missions/${id}`)
+      .set(auth(token));
+    expect(again.body.drawings).toEqual([moved]);
+  });
+
+  it("rejects a drawing that is not an image", async () => {
+    const res = await request(app)
+      .post("/api/missions")
+      .set(auth(token))
+      .send({
+        ...validBody,
+        drawings: [{ ...drawing, image: "data:text/html;base64,PGgxPg==" }],
+      });
     expect(res.status).toBe(400);
   });
 });

@@ -54,6 +54,7 @@ missionRoutes.get("/:id", authMiddleware, (req: AuthRequest, res) => {
     pois: JSON.parse(row.pois || "[]"),
     obstacles: JSON.parse(row.obstacles || "[]"),
     siteFeatures: JSON.parse(row.site_features || "[]"),
+    drawings: JSON.parse(row.drawings || "[]"),
   };
 
   res.json(mission);
@@ -61,7 +62,8 @@ missionRoutes.get("/:id", authMiddleware, (req: AuthRequest, res) => {
 
 // Create mission
 missionRoutes.post("/", optionalAuth, (req: AuthRequest, res) => {
-  const { name, config, waypoints, pois, obstacles, siteFeatures } = req.body;
+  const { name, config, waypoints, pois, obstacles, siteFeatures, drawings } =
+    req.body;
   if (!name || !config || !waypoints) {
     res.status(400).json({ error: "name, config, and waypoints are required" });
     return;
@@ -76,7 +78,7 @@ missionRoutes.post("/", optionalAuth, (req: AuthRequest, res) => {
   const db = getDb();
   const id = uuidv4();
   db.prepare(
-    "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles, site_features) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles, site_features, drawings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     id,
     name,
@@ -86,6 +88,7 @@ missionRoutes.post("/", optionalAuth, (req: AuthRequest, res) => {
     JSON.stringify(pois || []),
     JSON.stringify(obstacles || []),
     JSON.stringify(siteFeatures || []),
+    JSON.stringify(drawings || []),
   );
 
   res.status(201).json({ id, name });
@@ -93,7 +96,8 @@ missionRoutes.post("/", optionalAuth, (req: AuthRequest, res) => {
 
 // Update mission (owner only)
 missionRoutes.put("/:id", authMiddleware, (req: AuthRequest, res) => {
-  const { name, config, waypoints, pois, obstacles, siteFeatures } = req.body;
+  const { name, config, waypoints, pois, obstacles, siteFeatures, drawings } =
+    req.body;
   const db = getDb();
 
   const existing = db
@@ -142,6 +146,10 @@ missionRoutes.put("/:id", authMiddleware, (req: AuthRequest, res) => {
     updates.push("site_features = ?");
     values.push(JSON.stringify(siteFeatures));
   }
+  if (drawings !== undefined) {
+    updates.push("drawings = ?");
+    values.push(JSON.stringify(drawings));
+  }
 
   updates.push("updated_at = datetime('now')");
   values.push(req.params.id);
@@ -161,7 +169,7 @@ missionRoutes.post(
     const db = getDb();
     const row = db
       .prepare(
-        "SELECT user_id, name, config, waypoints, pois, obstacles, site_features FROM missions WHERE id = ?",
+        "SELECT user_id, name, config, waypoints, pois, obstacles, site_features, drawings FROM missions WHERE id = ?",
       )
       .get(req.params.id) as any;
     if (!row) {
@@ -176,7 +184,7 @@ missionRoutes.post(
     const id = uuidv4();
     const name = `${row.name} (copy)`;
     db.prepare(
-      "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles, site_features) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles, site_features, drawings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       id,
       name,
@@ -186,6 +194,7 @@ missionRoutes.post(
       row.pois || "[]",
       row.obstacles || "[]",
       row.site_features || "[]",
+      row.drawings || "[]",
     );
 
     res.status(201).json({ id, name });
