@@ -235,6 +235,123 @@ export interface FacadeParams {
   numColumns: number;
   addPhotos: boolean;
   aim: TemplateAim;
+  /** How rows and columns are chosen. Missing means manual (older seeds). */
+  coverage?: FacadeCoverage;
+}
+
+/**
+ * Automatic rows and columns for a wall. While `auto` is on, the counts are
+ * worked out again whenever the distance, the wall or the altitudes change:
+ * the fewest photos that still keep the overlap between neighbors.
+ */
+export interface FacadeCoverage {
+  auto: boolean;
+  /** Share of a photo's width repeated in the next column, 0 to 0.9. */
+  horizontalOverlap: number;
+  /** Share of a photo's height repeated in the next row, 0 to 0.9. */
+  verticalOverlap: number;
+}
+
+export const DEFAULT_FACADE_COVERAGE: FacadeCoverage = {
+  auto: true,
+  horizontalOverlap: 0.75,
+  verticalOverlap: 0.75,
+};
+
+export const FACADE_COVERAGE_PRESETS = [
+  {
+    label: "Coverage",
+    overlap: 0.2,
+    hint: "Every spot in one photo, with a margin for drift",
+  },
+  {
+    label: "Inspection",
+    overlap: 0.4,
+    hint: "Every spot in about two photos",
+  },
+  {
+    label: "3D model",
+    overlap: 0.75,
+    hint: "Overlap photogrammetry (WebODM) needs",
+  },
+] as const;
+
+/** Closest photo spacing the automatic counts will use, in meters. */
+export const MIN_FACADE_PHOTO_SPACING_M = 0.1;
+
+export interface WallCoverage {
+  numRows: number;
+  numColumns: number;
+  /** Wall area one photo covers at the standoff, level camera. */
+  footprint: { widthM: number; heightM: number };
+  /** Gap between neighboring photos the counts give, in meters. */
+  spacing: { horizontalM: number; verticalM: number };
+  /** Overlap the counts actually give: at least the target. */
+  overlap: { horizontal: number; vertical: number };
+}
+
+/**
+ * Fewest rows and columns that cover the wall with at least the requested
+ * overlap. Photos sit at both ends of the wall and at both altitudes, as the
+ * wall facade places them, with a level camera at the standoff distance.
+ */
+export function wallCoverage(
+  params: Pick<
+    FacadeParams,
+    "point1" | "point2" | "distanceM" | "minAltitude" | "maxAltitude"
+  >,
+  coverage: Pick<FacadeCoverage, "horizontalOverlap" | "verticalOverlap">,
+  camera: CameraModel = MAVIC_3E_CAMERA,
+): WallCoverage {
+  const clamp = (v: number) => Math.min(0.9, Math.max(0, v));
+  const lengthM = haversine(
+    params.point1[0],
+    params.point1[1],
+    params.point2[0],
+    params.point2[1],
+  );
+  const spanM = Math.abs(params.maxAltitude - params.minAltitude);
+  const distance = Math.max(0.5, params.distanceM);
+  const footprint = {
+    widthM: (distance * camera.sensorWidthMm) / camera.focalLengthMm,
+    heightM: (distance * camera.sensorHeightMm) / camera.focalLengthMm,
+  };
+  const maxStepH = Math.max(
+    MIN_FACADE_PHOTO_SPACING_M,
+    footprint.widthM * (1 - clamp(coverage.horizontalOverlap)),
+  );
+  const maxStepV = Math.max(
+    MIN_FACADE_PHOTO_SPACING_M,
+    footprint.heightM * (1 - clamp(coverage.verticalOverlap)),
+  );
+  // A tiny tolerance keeps an exact fit from adding a needless photo
+  const numColumns = Math.max(2, Math.ceil(lengthM / maxStepH - 1e-9) + 1);
+  const numRows =
+    spanM < 0.05 ? 1 : Math.max(2, Math.ceil(spanM / maxStepV - 1e-9) + 1);
+  const horizontalM = lengthM / (numColumns - 1);
+  const verticalM = numRows > 1 ? spanM / (numRows - 1) : 0;
+  return {
+    numRows,
+    numColumns,
+    footprint,
+    spacing: { horizontalM, verticalM },
+    overlap: {
+      horizontal: 1 - horizontalM / footprint.widthM,
+      vertical: numRows > 1 ? 1 - verticalM / footprint.heightM : 1,
+    },
+  };
+}
+
+/** The wall's params with rows and columns brought up to date when automatic. */
+export function withWallCoverage(
+  params: FacadeParams,
+  camera: CameraModel = MAVIC_3E_CAMERA,
+): FacadeParams {
+  if (!params.coverage?.auto) return params;
+  const { numRows, numColumns } = wallCoverage(params, params.coverage, camera);
+  return numRows === params.numRows && numColumns === params.numColumns
+    ? params
+    : { ...params, numRows, numColumns };
 }
 
 /** Which outline the facade tool is drawing. Wall is the original two-point scan. */
@@ -384,12 +501,13 @@ export const DEFAULT_FACADE_PARAMS: Omit<FacadeParams, "point1" | "point2"> = {
   distanceM: 1,
   minAltitude: 1,
   maxAltitude: 30,
-  // 1 m apart over the default band. The draw handler replaces both once
-  // the wall length is known.
+  // Placeholders: with automatic coverage on, the counts are worked out from
+  // the wall, distance and altitudes as soon as the wall is drawn.
   numRows: 30,
   numColumns: 2,
   addPhotos: true,
   aim: LEVEL_SURFACE_AIM,
+  coverage: DEFAULT_FACADE_COVERAGE,
 };
 
 export const DEFAULT_FACADE_SPACING: FacadeSpacing = {
@@ -1186,7 +1304,9 @@ export function generateFacade(
     row++
   ) {
     const altFraction = numRows <= 1 ? 0 : row / (numRows - 1);
-    const alt = Math.round(
+    // Tenths of a meter: close-range rows can be well under a meter apart,
+    // and whole meters would stack several of them at the same height
+    const alt = roundTenth(
       minAltitude + altFraction * (maxAltitude - minAltitude),
     );
     const reverse = row % 2 === 1; // zigzag

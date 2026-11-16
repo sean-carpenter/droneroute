@@ -24,6 +24,23 @@ export function formatDistance(
   return `${Math.round(meters)} m`;
 }
 
+/**
+ * A short distance with decimals, for close-range figures such as the gap
+ * between facade photos: "0.35 m", "1.41 m", "12.5 m" ("1.2 ft" in imperial).
+ */
+export function formatShortDistance(
+  meters: number,
+  unitSystem: UnitSystem = "metric",
+): string {
+  if (unitSystem === "imperial") {
+    const ft = meters * M_TO_FT;
+    return ft < 100 ? `${ft.toFixed(1)} ft` : `${Math.round(ft)} ft`;
+  }
+  if (meters < 10) return `${meters.toFixed(2)} m`;
+  if (meters < 100) return `${meters.toFixed(1)} m`;
+  return formatDistance(meters, unitSystem);
+}
+
 export function formatSpeed(
   ms: number,
   unitSystem: UnitSystem = "metric",

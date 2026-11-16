@@ -23,7 +23,7 @@ import {
   generateTower,
   generateBoundaryFacade,
   pointOnRay,
-  wallPhotoCounts,
+  withWallCoverage,
   DEFAULT_TOWER_PARAMS,
   DEFAULT_ORBIT_PARAMS,
   DEFAULT_GRID_PARAMS,
@@ -152,6 +152,13 @@ export function TemplateDrawHandler() {
   const [orbitParams, setOrbitParams] = useState<OrbitParams | null>(null);
   const [gridParams, setGridParams] = useState<GridParams | null>(null);
   const [facadeParams, setFacadeParams] = useState<FacadeParams | null>(null);
+  // Every change to a wall goes through here, so automatic rows and columns
+  // follow the distance, the wall and the altitudes ("sticky" coverage).
+  const updateFacade = useCallback(
+    (params: FacadeParams | null) =>
+      setFacadeParams(params && withWallCoverage(params, camera)),
+    [camera],
+  );
   const [facadeBoundary, setFacadeBoundary] =
     useState<FacadeBoundaryKind>("wall");
   const [boundaryParams, setBoundaryParams] =
@@ -211,7 +218,7 @@ export function TemplateDrawHandler() {
         setBoundaryParams(templateSeed.params);
       } else {
         setFacadeBoundary("wall");
-        setFacadeParams(templateSeed.params);
+        updateFacade(templateSeed.params);
       }
     }
     setConfirmed(true);
@@ -290,16 +297,10 @@ export function TemplateDrawHandler() {
             radiusTopM: radiusM,
           });
         } else {
-          setFacadeParams({
+          updateFacade({
             ...DEFAULT_FACADE_PARAMS,
             point1: finalDrag.start,
             point2: finalDrag.end,
-            ...wallPhotoCounts(
-              finalDrag.start,
-              finalDrag.end,
-              DEFAULT_FACADE_PARAMS.minAltitude,
-              DEFAULT_FACADE_PARAMS.maxAltitude,
-            ),
           });
         }
       } else if (tm === "tower") {
@@ -443,17 +444,16 @@ export function TemplateDrawHandler() {
           camera,
         });
       }
-      return generateFacade({
-        ...DEFAULT_FACADE_PARAMS,
-        point1: dragState.start,
-        point2: dragState.end,
-        ...wallPhotoCounts(
-          dragState.start,
-          dragState.end,
-          DEFAULT_FACADE_PARAMS.minAltitude,
-          DEFAULT_FACADE_PARAMS.maxAltitude,
+      return generateFacade(
+        withWallCoverage(
+          {
+            ...DEFAULT_FACADE_PARAMS,
+            point1: dragState.start,
+            point2: dragState.end,
+          },
+          camera,
         ),
-      });
+      );
     }
     if (templateMode === "tower") {
       return generateTower({
@@ -817,7 +817,7 @@ export function TemplateDrawHandler() {
           boundaryInfo={boundaryInfo}
           onOrbitChange={setOrbitParams}
           onGridChange={setGridParams}
-          onFacadeChange={setFacadeParams}
+          onFacadeChange={updateFacade}
           towerParams={towerParams}
           onTowerChange={setTowerParams}
           pois={pois}

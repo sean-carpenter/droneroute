@@ -31,17 +31,13 @@ import type {
   BoundaryFacadeResult,
   TemplateResult,
 } from "@/lib/templates";
-import {
-  MAX_SURVEY_WAYPOINTS,
-  corridorLayout,
-  gridSpacing,
-  wallPhotoCounts,
-} from "@/lib/templates";
+import { corridorLayout, gridSpacing } from "@/lib/templates";
 import { cameraForPayload } from "@/lib/camera";
 import { useMissionStore } from "@/store/missionStore";
 import { SurveyFields } from "./SurveyFields";
 import { CameraAimSection } from "./CameraAimSection";
 import { BoundaryFacadeFields } from "./BoundaryFacadeFields";
+import { WallCoverageFields } from "./WallCoverageFields";
 import type { PointOfInterest } from "@droneroute/shared";
 
 const NO_WAYPOINTS: TemplateResult["waypoints"] = [];
@@ -863,48 +859,6 @@ export function TemplateConfigPanel({
                 className="h-7 text-xs"
               />
             </div>
-            <div>
-              <Label className="text-[10px]">Rows</Label>
-              <NumericInput
-                value={facadeParams.numRows}
-                onChange={(v) =>
-                  onFacadeChange({ ...facadeParams, numRows: v })
-                }
-                min={1}
-                max={MAX_SURVEY_WAYPOINTS}
-                fallback={
-                  wallPhotoCounts(
-                    facadeParams.point1,
-                    facadeParams.point2,
-                    facadeParams.minAltitude,
-                    facadeParams.maxAltitude,
-                  ).numRows
-                }
-                integer
-                className="h-7 text-xs"
-              />
-            </div>
-            <div>
-              <Label className="text-[10px]">Columns</Label>
-              <NumericInput
-                value={facadeParams.numColumns}
-                onChange={(v) =>
-                  onFacadeChange({ ...facadeParams, numColumns: v })
-                }
-                min={2}
-                max={MAX_SURVEY_WAYPOINTS}
-                fallback={
-                  wallPhotoCounts(
-                    facadeParams.point1,
-                    facadeParams.point2,
-                    facadeParams.minAltitude,
-                    facadeParams.maxAltitude,
-                  ).numColumns
-                }
-                integer
-                className="h-7 text-xs"
-              />
-            </div>
             <div className="flex items-end pb-1">
               <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                 <input
@@ -922,6 +876,13 @@ export function TemplateConfigPanel({
               </label>
             </div>
           </div>
+          <WallCoverageFields
+            params={facadeParams}
+            onChange={onFacadeChange}
+            camera={camera}
+            cameraExact={cameraExact}
+            previewWaypoints={previewWaypoints}
+          />
           {facadeParams.numRows * facadeParams.numColumns > waypointCount && (
             <p className="text-[10px] text-orange-300 mb-2">
               Only the first {waypointCount} photos are kept. Use fewer rows or

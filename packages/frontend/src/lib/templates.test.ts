@@ -23,6 +23,8 @@ import {
   generateFacade,
   generateOrbit,
   wallPhotoCounts,
+  wallCoverage,
+  withWallCoverage,
   generatePencil,
   generateTower,
   offsetPolygon,
@@ -711,5 +713,88 @@ describe("polygonFacadeAround", () => {
     const params = polygonFacadeAround(square, 60);
     expect(params.minAltitude).toBe(1); // the default, just off the ground
     expect(params.maxAltitude).toBe(65);
+  });
+});
+
+describe("wall coverage (automatic rows and columns)", () => {
+  // A wall 10 m long running east from a point at Crestwood
+  const start: [number, number] = [42.55917, -71.07792];
+  const metersEast = 10 / (111_320 * Math.cos((start[0] * Math.PI) / 180));
+  const end: [number, number] = [start[0], start[1] + metersEast];
+  const wall = {
+    point1: start,
+    point2: end,
+    distanceM: 1,
+    minAltitude: 1,
+    maxAltitude: 9,
+  };
+
+  it("covers a photo's width and height at the standoff (Mavic 3E, 1 m)", () => {
+    const c = wallCoverage(wall, { horizontalOverlap: 0, verticalOverlap: 0 });
+    expect(c.footprint.widthM).toBeCloseTo(17.3 / 12.3, 3);
+    expect(c.footprint.heightM).toBeCloseTo(13 / 12.3, 3);
+  });
+
+  it("uses the fewest photos that keep at least the overlap", () => {
+    for (const overlap of [0, 0.2, 0.4, 0.75]) {
+      const c = wallCoverage(wall, {
+        horizontalOverlap: overlap,
+        verticalOverlap: overlap,
+      });
+      expect(c.overlap.horizontal).toBeGreaterThanOrEqual(overlap - 1e-9);
+      expect(c.overlap.vertical).toBeGreaterThanOrEqual(overlap - 1e-9);
+      // One column or row fewer would drop below the target
+      const lengthM = c.spacing.horizontalM * (c.numColumns - 1);
+      expect(
+        1 - lengthM / (c.numColumns - 2) / c.footprint.widthM,
+      ).toBeLessThan(overlap);
+      expect(1 - 8 / (c.numRows - 2) / c.footprint.heightM).toBeLessThan(
+        overlap,
+      );
+    }
+  });
+
+  it("grows with overlap and shrinks with distance", () => {
+    const at = (distanceM: number, overlap: number) => {
+      const c = wallCoverage(
+        { ...wall, distanceM },
+        { horizontalOverlap: overlap, verticalOverlap: overlap },
+      );
+      return c.numRows * c.numColumns;
+    };
+    expect(at(1, 0.75)).toBeGreaterThan(at(1, 0.4));
+    expect(at(1, 0.4)).toBeGreaterThan(at(1, 0.2));
+    expect(at(3, 0.75)).toBeLessThan(at(1, 0.75));
+  });
+
+  it("follows changes while auto, and leaves manual counts alone", () => {
+    const params = {
+      ...DEFAULT_FACADE_PARAMS,
+      ...wall,
+      coverage: { auto: true, horizontalOverlap: 0.2, verticalOverlap: 0.2 },
+    };
+    const near = withWallCoverage(params);
+    const far = withWallCoverage({ ...near, distanceM: 4 });
+    expect(far.numColumns).toBeLessThan(near.numColumns);
+    expect(far.numRows).toBeLessThan(near.numRows);
+
+    const manual = {
+      ...near,
+      numRows: 3,
+      coverage: { ...near.coverage!, auto: false },
+    };
+    expect(withWallCoverage({ ...manual, distanceM: 4 }).numRows).toBe(3);
+  });
+
+  it("keeps rows closer than a meter at distinct heights", () => {
+    const params = withWallCoverage({
+      ...DEFAULT_FACADE_PARAMS,
+      ...wall,
+      coverage: { auto: true, horizontalOverlap: 0.75, verticalOverlap: 0.75 },
+    });
+    const heights = new Set(
+      generateFacade(params).waypoints.map((w) => w.height),
+    );
+    expect(heights.size).toBe(params.numRows);
   });
 });
