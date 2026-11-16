@@ -82,7 +82,7 @@ sharedRoutes.get("/shared/:token", (req, res) => {
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT m.id, m.name, m.config, m.waypoints, m.pois, m.obstacles, m.site_features, m.drawings, m.share_token, m.created_at, m.updated_at, u.email
+      `SELECT m.id, m.name, m.config, m.waypoints, m.pois, m.obstacles, m.site_features, m.drawings, m.routes, m.share_token, m.created_at, m.updated_at, u.email
        FROM missions m
        LEFT JOIN users u ON m.user_id = u.id
        WHERE m.share_token = ?`,
@@ -107,6 +107,7 @@ sharedRoutes.get("/shared/:token", (req, res) => {
     obstacles: JSON.parse(row.obstacles || "[]"),
     siteFeatures: JSON.parse(row.site_features || "[]"),
     drawings: JSON.parse(row.drawings || "[]"),
+    routes: JSON.parse(row.routes || "[]"),
   };
 
   res.json(mission);
@@ -120,7 +121,7 @@ sharedRoutes.post(
     const db = getDb();
     const row = db
       .prepare(
-        "SELECT name, config, waypoints, pois, obstacles, site_features, drawings FROM missions WHERE share_token = ?",
+        "SELECT name, config, waypoints, pois, obstacles, site_features, drawings, routes FROM missions WHERE share_token = ?",
       )
       .get(req.params.token) as any;
 
@@ -133,7 +134,7 @@ sharedRoutes.post(
     const name = `${row.name} (copy)`;
 
     db.prepare(
-      "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles, site_features, drawings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles, site_features, drawings, routes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       id,
       name,
@@ -144,6 +145,7 @@ sharedRoutes.post(
       row.obstacles || "[]",
       row.site_features || "[]",
       row.drawings || "[]",
+      row.routes || "[]",
     );
 
     res.status(201).json({ id, name });

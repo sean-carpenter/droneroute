@@ -17,6 +17,8 @@ const MAX_OBSTACLES = 1000;
 const MAX_VERTICES_PER_OBSTACLE = 5000;
 const MAX_OBSTACLE_HEIGHT_M = 1000;
 const MAX_SITE_FEATURES = 200;
+const MAX_ROUTES = 500;
+const MAX_ID_LEN = 64;
 const MAX_VERTICES_PER_FEATURE = 500;
 const SITE_FEATURE_KINDS = ["existing", "garage", "addition", "lot", "other"];
 const COLOR = /^#[0-9a-fA-F]{6}$/;
@@ -58,6 +60,34 @@ function validateWaypoints(value: unknown): string | null {
     }
     if (!isFiniteNumber(wp.height)) return "invalid waypoint height";
     if (!isOptionalName(wp.name)) return "invalid waypoint name";
+    if (
+      wp.routeId !== undefined &&
+      (typeof wp.routeId !== "string" || wp.routeId.length > MAX_ID_LEN)
+    ) {
+      return "invalid waypoint route";
+    }
+  }
+  return null;
+}
+
+/** Checks the named groups of waypoints shown in the list. */
+function validateRoutes(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (!Array.isArray(value)) return "routes must be an array";
+  if (value.length > MAX_ROUTES) return "too many routes";
+  for (const route of value) {
+    if (!isPlainObject(route)) return "invalid route";
+    if (
+      typeof route.id !== "string" ||
+      route.id.length === 0 ||
+      route.id.length > MAX_ID_LEN
+    ) {
+      return "invalid route id";
+    }
+    if (!isValidName(route.name)) return "invalid route name";
+    if (typeof route.kind !== "string" || route.kind.length > 32) {
+      return "invalid route kind";
+    }
   }
   return null;
 }
@@ -140,6 +170,7 @@ export interface MissionPayload {
   obstacles?: unknown;
   siteFeatures?: unknown;
   drawings?: unknown;
+  routes?: unknown;
 }
 
 /** Checks the buildings, lot and other areas drawn on the site. */
@@ -299,7 +330,8 @@ export function validateMissionCreate(body: MissionPayload): string | null {
     validatePois(body.pois) ??
     validateObstacles(body.obstacles) ??
     validateSiteFeatures(body.siteFeatures) ??
-    validateDrawings(body.drawings)
+    validateDrawings(body.drawings) ??
+    validateRoutes(body.routes)
   );
 }
 
@@ -324,7 +356,8 @@ export function validateMissionUpdate(body: MissionPayload): string | null {
     validatePois(body.pois) ??
     validateObstacles(body.obstacles) ??
     validateSiteFeatures(body.siteFeatures) ??
-    validateDrawings(body.drawings)
+    validateDrawings(body.drawings) ??
+    validateRoutes(body.routes)
   );
 }
 

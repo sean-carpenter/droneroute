@@ -44,6 +44,7 @@ interface SavedMission {
   pois: string;
   obstacles: string;
   site_features?: string;
+  routes?: string;
   share_token: string | null;
 }
 
@@ -196,6 +197,7 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
         obstacles,
         siteFeatures,
         drawings: drawings ?? [],
+        routes: mission.routes ? JSON.parse(mission.routes) : [],
       });
       setCurrentPage("editor");
     } catch (e) {

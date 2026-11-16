@@ -19,7 +19,7 @@ missionRoutes.get("/", authMiddleware, (req: AuthRequest, res) => {
   const db = getDb();
   const rows = db
     .prepare(
-      "SELECT id, name, config, waypoints, pois, obstacles, site_features, share_token, created_at, updated_at FROM missions WHERE user_id = ? ORDER BY updated_at DESC",
+      "SELECT id, name, config, waypoints, pois, obstacles, site_features, routes, share_token, created_at, updated_at FROM missions WHERE user_id = ? ORDER BY updated_at DESC",
     )
     .all(req.userId!) as any[];
 
@@ -55,6 +55,7 @@ missionRoutes.get("/:id", authMiddleware, (req: AuthRequest, res) => {
     obstacles: JSON.parse(row.obstacles || "[]"),
     siteFeatures: JSON.parse(row.site_features || "[]"),
     drawings: JSON.parse(row.drawings || "[]"),
+    routes: JSON.parse(row.routes || "[]"),
   };
 
   res.json(mission);
@@ -62,8 +63,16 @@ missionRoutes.get("/:id", authMiddleware, (req: AuthRequest, res) => {
 
 // Create mission
 missionRoutes.post("/", optionalAuth, (req: AuthRequest, res) => {
-  const { name, config, waypoints, pois, obstacles, siteFeatures, drawings } =
-    req.body;
+  const {
+    name,
+    config,
+    waypoints,
+    pois,
+    obstacles,
+    siteFeatures,
+    drawings,
+    routes,
+  } = req.body;
   if (!name || !config || !waypoints) {
     res.status(400).json({ error: "name, config, and waypoints are required" });
     return;
@@ -78,7 +87,7 @@ missionRoutes.post("/", optionalAuth, (req: AuthRequest, res) => {
   const db = getDb();
   const id = uuidv4();
   db.prepare(
-    "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles, site_features, drawings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles, site_features, drawings, routes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     id,
     name,
@@ -89,6 +98,7 @@ missionRoutes.post("/", optionalAuth, (req: AuthRequest, res) => {
     JSON.stringify(obstacles || []),
     JSON.stringify(siteFeatures || []),
     JSON.stringify(drawings || []),
+    JSON.stringify(routes || []),
   );
 
   res.status(201).json({ id, name });
@@ -96,8 +106,16 @@ missionRoutes.post("/", optionalAuth, (req: AuthRequest, res) => {
 
 // Update mission (owner only)
 missionRoutes.put("/:id", authMiddleware, (req: AuthRequest, res) => {
-  const { name, config, waypoints, pois, obstacles, siteFeatures, drawings } =
-    req.body;
+  const {
+    name,
+    config,
+    waypoints,
+    pois,
+    obstacles,
+    siteFeatures,
+    drawings,
+    routes,
+  } = req.body;
   const db = getDb();
 
   const existing = db
@@ -150,6 +168,10 @@ missionRoutes.put("/:id", authMiddleware, (req: AuthRequest, res) => {
     updates.push("drawings = ?");
     values.push(JSON.stringify(drawings));
   }
+  if (routes !== undefined) {
+    updates.push("routes = ?");
+    values.push(JSON.stringify(routes));
+  }
 
   updates.push("updated_at = datetime('now')");
   values.push(req.params.id);
@@ -169,7 +191,7 @@ missionRoutes.post(
     const db = getDb();
     const row = db
       .prepare(
-        "SELECT user_id, name, config, waypoints, pois, obstacles, site_features, drawings FROM missions WHERE id = ?",
+        "SELECT user_id, name, config, waypoints, pois, obstacles, site_features, drawings, routes FROM missions WHERE id = ?",
       )
       .get(req.params.id) as any;
     if (!row) {
@@ -184,7 +206,7 @@ missionRoutes.post(
     const id = uuidv4();
     const name = `${row.name} (copy)`;
     db.prepare(
-      "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles, site_features, drawings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles, site_features, drawings, routes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       id,
       name,
@@ -195,6 +217,7 @@ missionRoutes.post(
       row.obstacles || "[]",
       row.site_features || "[]",
       row.drawings || "[]",
+      row.routes || "[]",
     );
 
     res.status(201).json({ id, name });

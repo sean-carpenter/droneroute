@@ -27,6 +27,7 @@ import type {
   Waypoint,
   MissionConfig,
   PointOfInterest,
+  MissionRoute,
   Obstacle,
   SiteDrawing,
   SiteFeature,
@@ -45,6 +46,7 @@ interface SharedMissionData {
   obstacles: Obstacle[];
   siteFeatures?: SiteFeature[];
   drawings?: SiteDrawing[];
+  routes?: MissionRoute[];
 }
 
 function haversine(
@@ -357,6 +359,7 @@ export function SharedMissionPage({
       obstacles: mission.obstacles,
       siteFeatures: mission.siteFeatures,
       drawings: mission.drawings,
+      routes: mission.routes,
     });
     window.history.pushState({}, "", "/");
     setCurrentPage("editor");
@@ -382,6 +385,7 @@ export function SharedMissionPage({
         obstacles: mission.obstacles,
         siteFeatures: mission.siteFeatures,
         drawings: mission.drawings,
+        routes: mission.routes,
       });
       window.history.pushState({}, "", "/");
       setCurrentPage("editor");

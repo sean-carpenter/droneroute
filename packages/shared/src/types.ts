@@ -335,6 +335,8 @@ export interface Waypoint {
    */
   photoIntervalM?: number;
   actions: WaypointAction[];
+  /** The route (group of waypoints in the list) this waypoint belongs to. */
+  routeId?: string;
 }
 
 // ── Mission Config ───────────────────────────────────────
@@ -397,6 +399,21 @@ export interface MissionConfig {
   takeoff?: TakeoffPoint;
 }
 
+// ── Route ────────────────────────────────────────────────
+
+/**
+ * A named group of waypoints: what one template, one import or a set of
+ * hand-placed waypoints made. Routes organize the list; the mission is still
+ * flown and exported as one path, route after route in this order, each
+ * route's waypoints together.
+ */
+export interface MissionRoute {
+  id: string;
+  name: string;
+  /** What made it: a template type, "manual" or "import". */
+  kind: string;
+}
+
 // ── Mission ──────────────────────────────────────────────
 
 export interface Mission {
@@ -411,6 +428,7 @@ export interface Mission {
   obstacles: Obstacle[];
   siteFeatures?: SiteFeature[];
   drawings?: SiteDrawing[];
+  routes?: MissionRoute[];
 }
 
 // ── Shared Mission ──────────────────────────────────────
@@ -428,6 +446,7 @@ export interface SharedMission {
   obstacles: Obstacle[];
   siteFeatures?: SiteFeature[];
   drawings?: SiteDrawing[];
+  routes?: MissionRoute[];
 }
 
 // ── Route proposals (drafted by an AI agent, reviewed by the user) ──────

@@ -90,6 +90,7 @@ export default function App() {
     obstacles,
     siteFeatures,
     drawings,
+    routes,
     loadMission,
     currentPage,
     setCurrentPage,
@@ -407,6 +408,7 @@ export default function App() {
           obstacles,
           siteFeatures,
           drawings,
+          routes,
         });
       } else {
         const result = await api.post<{ id: string }>("/missions", {
@@ -417,6 +419,7 @@ export default function App() {
           obstacles,
           siteFeatures,
           drawings,
+          routes,
         });
         setMissionId(result.id);
       }

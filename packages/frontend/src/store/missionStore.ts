@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  MissionRoute,
   Waypoint,
   MissionConfig,
   WaypointAction,
@@ -18,6 +19,7 @@ import { usePreferencesStore } from "@/store/preferencesStore";
 import type { TemplateType } from "@/lib/templates";
 import type { TemplateSeed } from "@/lib/proposal";
 import { newId } from "@/lib/ids";
+import { newRoute, normalizeRoutes, routeIndices } from "@/lib/routes";
 
 export type SelectionMode = "replace" | "toggle" | "range";
 
@@ -31,6 +33,7 @@ export interface MissionSnapshot {
   obstacles: Obstacle[];
   siteFeatures: SiteFeature[];
   drawings: SiteDrawing[];
+  routes: MissionRoute[];
 }
 
 /** Maximum number of undo steps kept. */
@@ -47,8 +50,11 @@ interface MissionState {
   // Config
   config: MissionConfig;
 
-  // Waypoints
+  // Waypoints, grouped into routes (one flight, routes in list order)
   waypoints: Waypoint[];
+  routes: MissionRoute[];
+  /** Route that hand-placed waypoints go into. */
+  activeRouteId: string | null;
   selectedWaypointIndices: Set<number>;
   lastSelectedWaypointIndex: number | null;
 
@@ -117,6 +123,18 @@ interface MissionState {
   /** Select exactly these waypoints, or add them to the current selection. */
   setWaypointSelection: (indices: number[], additive?: boolean) => void;
   removeSelectedWaypoints: () => void;
+
+  // Route actions
+  /** Starts an empty hand-made route and makes it the active one. */
+  addRoute: () => void;
+  renameRoute: (id: string, name: string) => void;
+  /** Removes the route and its waypoints. */
+  removeRoute: (id: string) => void;
+  /** Moves a route one place earlier (-1) or later (+1) in the flight. */
+  moveRoute: (id: string, delta: -1 | 1) => void;
+  setActiveRoute: (id: string) => void;
+  /** Makes the route active and selects all its waypoints. */
+  selectRoute: (id: string) => void;
   updateSelectedWaypoints: (updates: Partial<Waypoint>) => void;
   /** Apply a per-waypoint change to every selected waypoint. */
   mapSelectedWaypoints: (fn: (wp: Waypoint) => Waypoint) => void;
@@ -202,9 +220,21 @@ interface MissionState {
     obstacles?: Obstacle[];
     siteFeatures?: SiteFeature[];
     drawings?: SiteDrawing[];
+    routes?: MissionRoute[];
   }) => void;
   clearMission: () => void;
   setDirty: (dirty: boolean) => void;
+}
+
+/** Routes that still have waypoints, plus the active one even if empty. */
+function keepRoutesInUse(
+  routes: MissionRoute[],
+  waypoints: Waypoint[],
+  activeRouteId: string | null,
+): MissionRoute[] {
+  const used = new Set(waypoints.map((wp) => wp.routeId));
+  const kept = routes.filter((r) => used.has(r.id) || r.id === activeRouteId);
+  return kept.length === routes.length ? routes : kept;
 }
 
 const CLEARED_SELECTION = {
@@ -226,6 +256,7 @@ function snapshotOf(state: MissionSnapshot): MissionSnapshot {
     obstacles: state.obstacles,
     siteFeatures: state.siteFeatures,
     drawings: state.drawings,
+    routes: state.routes,
   };
 }
 
@@ -237,6 +268,7 @@ function documentChanged(a: MissionSnapshot, b: MissionSnapshot): boolean {
     a.obstacles !== b.obstacles ||
     a.siteFeatures !== b.siteFeatures ||
     a.drawings !== b.drawings ||
+    a.routes !== b.routes ||
     a.config !== b.config ||
     a.missionName !== b.missionName
   );
@@ -252,6 +284,8 @@ export const useMissionStore = create<MissionState>((set, get) => ({
   dirty: false,
   config: { ...DEFAULT_MISSION_CONFIG },
   waypoints: [],
+  routes: [],
+  activeRouteId: null,
   selectedWaypointIndices: new Set<number>(),
   lastSelectedWaypointIndex: null,
   pois: [],
@@ -345,17 +379,32 @@ export const useMissionStore = create<MissionState>((set, get) => ({
 
   addWaypoint: (lat, lng) =>
     set((state) => {
-      const index = state.waypoints.length;
+      // Into the active route (else the last one, else a new one), at its end
+      let routes = state.routes;
+      let routeId =
+        state.activeRouteId && routes.some((r) => r.id === state.activeRouteId)
+          ? state.activeRouteId
+          : routes[routes.length - 1]?.id;
+      if (!routeId) {
+        const route = newRoute("manual", routes);
+        routes = [...routes, route];
+        routeId = route.id;
+      }
       const newWaypoint: Waypoint = {
         ...DEFAULT_WAYPOINT,
-        index,
-        name: `Waypoint ${index + 1}`,
+        index: state.waypoints.length,
+        name: `Waypoint ${state.waypoints.length + 1}`,
         latitude: lat,
         longitude: lng,
         actions: [],
+        routeId,
       };
+      const next = normalizeRoutes([...state.waypoints, newWaypoint], routes);
+      const index = routeIndices(next.waypoints, routeId).at(-1)!;
       return {
-        waypoints: [...state.waypoints, newWaypoint],
+        waypoints: next.waypoints,
+        routes: next.routes,
+        activeRouteId: routeId,
         selectedWaypointIndices: new Set([index]),
         lastSelectedWaypointIndex: index,
         dirty: true,
@@ -372,9 +421,16 @@ export const useMissionStore = create<MissionState>((set, get) => ({
 
   removeWaypoint: (index) =>
     set((state) => {
-      const filtered = state.waypoints
-        .filter((wp) => wp.index !== index)
-        .map((wp, i) => ({ ...wp, index: i }));
+      const next = normalizeRoutes(
+        state.waypoints.filter((wp) => wp.index !== index),
+        keepRoutesInUse(
+          state.routes,
+          state.waypoints.filter((wp) => wp.index !== index),
+          state.activeRouteId,
+        ),
+      );
+      const filtered = next.waypoints;
+      const routes = next.routes;
 
       // Rebuild selection: remove the deleted index, adjust indices above it
       const newSelection = new Set<number>();
@@ -385,6 +441,7 @@ export const useMissionStore = create<MissionState>((set, get) => ({
 
       return {
         waypoints: filtered,
+        routes,
         selectedWaypointIndices: newSelection,
         lastSelectedWaypointIndex:
           state.lastSelectedWaypointIndex === index
@@ -499,11 +556,16 @@ export const useMissionStore = create<MissionState>((set, get) => ({
   removeSelectedWaypoints: () =>
     set((state) => {
       if (state.selectedWaypointIndices.size === 0) return state;
-      const filtered = state.waypoints
-        .filter((wp) => !state.selectedWaypointIndices.has(wp.index))
-        .map((wp, i) => ({ ...wp, index: i }));
+      const kept = state.waypoints.filter(
+        (wp) => !state.selectedWaypointIndices.has(wp.index),
+      );
+      const next = normalizeRoutes(
+        kept,
+        keepRoutesInUse(state.routes, kept, state.activeRouteId),
+      );
       return {
-        waypoints: filtered,
+        waypoints: next.waypoints,
+        routes: next.routes,
         selectedWaypointIndices: new Set<number>(),
         lastSelectedWaypointIndex: null,
         dirty: true,
@@ -523,15 +585,89 @@ export const useMissionStore = create<MissionState>((set, get) => ({
   reorderWaypoints: (fromIndex, toIndex) =>
     set((state) => {
       const items = [...state.waypoints];
-      const [moved] = items.splice(fromIndex, 1);
+      const target = items[toIndex];
+      const [picked] = items.splice(fromIndex, 1);
+      // Dropped onto another route's waypoint: it joins that route
+      const moved = target ? { ...picked, routeId: target.routeId } : picked;
       items.splice(toIndex, 0, moved);
-      // Re-index after reorder
-      const reindexed = items.map((wp, i) => ({ ...wp, index: i }));
+      const next = normalizeRoutes(items, state.routes);
+      const at = next.from.indexOf(toIndex);
       return {
-        waypoints: reindexed,
-        selectedWaypointIndices: new Set([toIndex]),
-        lastSelectedWaypointIndex: toIndex,
+        waypoints: next.waypoints,
+        routes: keepRoutesInUse(
+          next.routes,
+          next.waypoints,
+          state.activeRouteId,
+        ),
+        selectedWaypointIndices: new Set([at]),
+        lastSelectedWaypointIndex: at,
         dirty: true,
+      };
+    }),
+
+  // Route actions
+  addRoute: () =>
+    set((state) => {
+      const route = newRoute("manual", state.routes);
+      return {
+        routes: [...state.routes, route],
+        activeRouteId: route.id,
+        dirty: true,
+      };
+    }),
+
+  renameRoute: (id, name) =>
+    set((state) => ({
+      routes: state.routes.map((r) => (r.id === id ? { ...r, name } : r)),
+      dirty: true,
+    })),
+
+  removeRoute: (id) =>
+    set((state) => {
+      const routes = state.routes.filter((r) => r.id !== id);
+      const next = normalizeRoutes(
+        state.waypoints.filter((wp) => wp.routeId !== id),
+        routes,
+      );
+      return {
+        waypoints: next.waypoints,
+        routes: next.routes,
+        activeRouteId:
+          state.activeRouteId === id
+            ? (next.routes.at(-1)?.id ?? null)
+            : state.activeRouteId,
+        selectedWaypointIndices: new Set<number>(),
+        lastSelectedWaypointIndex: null,
+        dirty: true,
+      };
+    }),
+
+  moveRoute: (id, delta) =>
+    set((state) => {
+      const from = state.routes.findIndex((r) => r.id === id);
+      const to = from + delta;
+      if (from < 0 || to < 0 || to >= state.routes.length) return state;
+      const routes = [...state.routes];
+      [routes[from], routes[to]] = [routes[to], routes[from]];
+      const next = normalizeRoutes(state.waypoints, routes);
+      return {
+        waypoints: next.waypoints,
+        routes: next.routes,
+        selectedWaypointIndices: new Set(routeIndices(next.waypoints, id)),
+        lastSelectedWaypointIndex: null,
+        dirty: true,
+      };
+    }),
+
+  setActiveRoute: (id) => set({ activeRouteId: id }),
+
+  selectRoute: (id) =>
+    set((state) => {
+      const indices = routeIndices(state.waypoints, id);
+      return {
+        activeRouteId: id,
+        selectedWaypointIndices: new Set(indices),
+        lastSelectedWaypointIndex: indices.at(-1) ?? null,
       };
     }),
 
@@ -852,11 +988,14 @@ export const useMissionStore = create<MissionState>((set, get) => ({
 
   appendWaypoints: (newWps, newPois) =>
     set((state) => {
+      // Each template makes a route of its own, named after it
+      const route = newRoute(state.templateMode ?? "manual", state.routes);
       const startIndex = state.waypoints.length;
       const fullWaypoints: Waypoint[] = newWps.map((wp, i) => ({
         ...wp,
         index: startIndex + i,
         name: `Waypoint ${startIndex + i + 1}`,
+        routeId: route.id,
       }));
 
       const fullPois: PointOfInterest[] = (newPois || []).map((p) => ({
@@ -876,8 +1015,14 @@ export const useMissionStore = create<MissionState>((set, get) => ({
         }
       }
 
+      const next = normalizeRoutes(
+        [...state.waypoints, ...fullWaypoints],
+        [...state.routes, route],
+      );
       return {
-        waypoints: [...state.waypoints, ...fullWaypoints],
+        waypoints: next.waypoints,
+        routes: next.routes,
+        activeRouteId: route.id,
         pois: [...state.pois, ...fullPois],
         selectedWaypointIndices: new Set(fullWaypoints.map((wp) => wp.index)),
         lastSelectedWaypointIndex:
@@ -891,14 +1036,22 @@ export const useMissionStore = create<MissionState>((set, get) => ({
 
   appendImported: (newWps, newPois = []) =>
     set((state) => {
+      const route = newRoute("import", state.routes);
       const startIndex = state.waypoints.length;
       const appended = newWps.map((wp, i) => ({
         ...wp,
         index: startIndex + i,
         name: `Waypoint ${startIndex + i + 1}`,
+        routeId: route.id,
       }));
+      const next = normalizeRoutes(
+        [...state.waypoints, ...appended],
+        [...state.routes, route],
+      );
       return {
-        waypoints: [...state.waypoints, ...appended],
+        waypoints: next.waypoints,
+        routes: next.routes,
+        activeRouteId: route.id,
         pois: [...state.pois, ...newPois],
         selectedWaypointIndices: new Set(appended.map((wp) => wp.index)),
         lastSelectedWaypointIndex: appended.length
@@ -912,13 +1065,17 @@ export const useMissionStore = create<MissionState>((set, get) => ({
     // A freshly loaded mission is a new document: its history starts empty.
     restoringHistory = true;
     lastHistoryPushAt = 0;
+    // Older missions have no routes: their waypoints open as one route
+    const grouped = normalizeRoutes(data.waypoints, data.routes ?? []);
     set({
       past: [],
       future: [],
       missionId: data.id || null,
       missionName: data.name,
       config: data.config,
-      waypoints: data.waypoints,
+      waypoints: grouped.waypoints,
+      routes: grouped.routes,
+      activeRouteId: grouped.routes.at(-1)?.id ?? null,
       pois: data.pois || [],
       obstacles: data.obstacles || [],
       siteFeatures: data.siteFeatures || [],
@@ -941,6 +1098,8 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       missionName: "New Mission",
       config: { ...DEFAULT_MISSION_CONFIG, ...prefs.missionDefaults },
       waypoints: [],
+      routes: [],
+      activeRouteId: null,
       pois: [],
       obstacles: [],
       siteFeatures: [],

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { DEFAULT_WAYPOINT } from "@droneroute/shared";
 import {
   HISTORY_COALESCE_MS,
   HISTORY_LIMIT,
@@ -360,5 +361,116 @@ describe("adjusting a drawing", () => {
     // Leaving a template does not turn adjusting back on
     store().setTemplateMode(null);
     expect(store().selectedDrawingId).toBeNull();
+  });
+});
+
+describe("routes", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    store().clearMission();
+    store().clearHistory();
+    tick();
+  });
+
+  const names = () =>
+    store().waypoints.map(
+      (w) =>
+        `${store().routes.find((r) => r.id === w.routeId)?.name}:${w.index}`,
+    );
+
+  it("puts each template in a route of its own, named after it", () => {
+    store().addWaypoint(1, 1);
+    store().setTemplateMode("facade");
+    store().appendWaypoints(
+      [
+        { ...store().waypoints[0], latitude: 2 },
+        { ...store().waypoints[0], latitude: 3 },
+      ],
+      [],
+    );
+    store().setTemplateMode("orbit");
+    store().appendWaypoints([{ ...store().waypoints[0], latitude: 4 }], []);
+    expect(store().routes.map((r) => r.name)).toEqual([
+      "Route 1",
+      "Facade",
+      "Orbit",
+    ]);
+    expect(names()).toEqual(["Route 1:0", "Facade:1", "Facade:2", "Orbit:3"]);
+    expect(store().activeRouteId).toBe(store().routes[2].id);
+  });
+
+  it("adds hand-placed waypoints to the end of the active route", () => {
+    store().addWaypoint(1, 1);
+    store().setTemplateMode("facade");
+    store().appendWaypoints([{ ...store().waypoints[0], latitude: 2 }], []);
+    store().setActiveRoute(store().routes[0].id);
+    store().addWaypoint(5, 5);
+    expect(names()).toEqual(["Route 1:0", "Route 1:1", "Facade:2"]);
+    expect(store().waypoints[1].latitude).toBe(5);
+    expect([...store().selectedWaypointIndices]).toEqual([1]);
+  });
+
+  it("moves, selects and deletes a route as a unit, undoably", () => {
+    store().addWaypoint(1, 1);
+    store().setTemplateMode("grid");
+    store().appendWaypoints(
+      [
+        { ...store().waypoints[0], latitude: 2 },
+        { ...store().waypoints[0], latitude: 3 },
+      ],
+      [],
+    );
+    const grid = store().routes[1].id;
+    tick();
+    store().moveRoute(grid, -1);
+    expect(names()).toEqual(["Grid survey:0", "Grid survey:1", "Route 1:2"]);
+
+    store().selectRoute(grid);
+    expect([...store().selectedWaypointIndices]).toEqual([0, 1]);
+
+    tick();
+    store().removeRoute(grid);
+    expect(names()).toEqual(["Route 1:0"]);
+    expect(store().routes).toHaveLength(1);
+    store().undo();
+    expect(store().routes).toHaveLength(2);
+    expect(store().waypoints).toHaveLength(3);
+  });
+
+  it("drops a route its waypoints were all deleted from", () => {
+    store().addWaypoint(1, 1);
+    store().setTemplateMode("orbit");
+    store().appendWaypoints([{ ...store().waypoints[0], latitude: 2 }], []);
+    store().setActiveRoute(store().routes[0].id);
+    store().removeWaypoint(1);
+    expect(store().routes.map((r) => r.name)).toEqual(["Route 1"]);
+  });
+
+  it("opens older missions with every waypoint in one route", () => {
+    store().loadMission({
+      name: "Old",
+      config: store().config,
+      waypoints: [
+        {
+          ...DEFAULT_WAYPOINT,
+          index: 0,
+          name: "a",
+          latitude: 1,
+          longitude: 1,
+          actions: [],
+        },
+        {
+          ...DEFAULT_WAYPOINT,
+          index: 1,
+          name: "b",
+          latitude: 2,
+          longitude: 2,
+          actions: [],
+        },
+      ],
+    });
+    expect(store().routes).toHaveLength(1);
+    expect(names()).toEqual(["Route 1:0", "Route 1:1"]);
   });
 });

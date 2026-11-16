@@ -8,7 +8,10 @@ Plan a drone flight by placing waypoints on the map and configuring what the dro
 - Set altitude, speed, gimbal pitch (camera angle), and heading for each waypoint.
 - Choose a heading mode: follow the flight path, set a fixed angle, smooth transition between angles, or aim toward a point of interest.
 - Choose a turn mode: smooth curve, stop at the waypoint then continue, or fly through without stopping.
-- Reorder waypoints by dragging them in the sidebar list.
+- Reorder waypoints by dragging them in the sidebar list. Dropping a waypoint onto another route's waypoint moves it into that route.
+- **Routes** organize the waypoint list. Each template you apply becomes a route of its own, named after it ("Facade", "Facade 2", "Orbit"...), and an imported file added to the mission becomes an "Imported" route. Waypoints you place by hand go to the end of the selected route (marked "adding here"); **New route** starts an empty one. Click a route's name to select all its waypoints and make it the one new waypoints go into, double-click to rename it, use the arrows to fly it earlier or later, the chevron to fold it away, and the bin to delete it with its waypoints. Missions saved before routes existed open with all their waypoints in "Route 1".
+- The mission is still flown and exported as one path: route after route in list order, each route's waypoints together. Routes are saved with the mission and copied when it is duplicated, shared or cloned.
+- Waypoints keep automatic names ("Waypoint 7") in step with their position; a name you type stays.
 - Select multiple waypoints at once (Ctrl+click, Shift+click, Ctrl+A, or Shift+drag a box on the map — add Ctrl/Cmd to extend the selection) and edit them all in bulk.
 - In the bulk editor, set a value for all selected waypoints or change them relatively: raise or lower altitude by an amount, set a photo interval, add or remove photo actions.
 - **Undo and redo** any change to the mission (waypoints, POIs, obstacles, settings, templates, clearing) with Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z or the toolbar arrows. Up to 50 steps are kept.

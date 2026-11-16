@@ -84,6 +84,15 @@ export function initDb(): void {
     // Column already exists — ignore
   }
 
+  // Migration: add routes column if missing (for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE missions ADD COLUMN routes TEXT NOT NULL DEFAULT '[]'`,
+    );
+  } catch {
+    // Column already exists — ignore
+  }
+
   // Migration: add drawings column if missing (for existing DBs)
   try {
     database.exec(

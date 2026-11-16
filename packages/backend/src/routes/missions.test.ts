@@ -212,3 +212,46 @@ describe("drawings", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("routes", () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+  const routes = [
+    { id: "r1", name: "Route 1", kind: "manual" },
+    { id: "r2", name: "Facade", kind: "facade" },
+  ];
+
+  it("saves routes and waypoint route ids, and lists them", async () => {
+    const body = {
+      ...validBody,
+      name: "With routes",
+      waypoints: validBody.waypoints.map((wp, i) => ({
+        ...wp,
+        routeId: i === 0 ? "r1" : "r2",
+      })),
+      routes,
+    };
+    const created = await request(app)
+      .post("/api/missions")
+      .set(auth(token))
+      .send(body);
+    expect(created.status).toBe(201);
+    const one = await request(app)
+      .get(`/api/missions/${created.body.id}`)
+      .set(auth(token));
+    expect(one.body.routes).toEqual(routes);
+    expect(
+      one.body.waypoints.map((w: { routeId: string }) => w.routeId),
+    ).toEqual(["r1", "r2"]);
+    const list = await request(app).get("/api/missions").set(auth(token));
+    const row = list.body.find((m: { id: string }) => m.id === created.body.id);
+    expect(JSON.parse(row.routes)).toEqual(routes);
+  });
+
+  it("rejects malformed routes", async () => {
+    const res = await request(app)
+      .post("/api/missions")
+      .set(auth(token))
+      .send({ ...validBody, routes: [{ id: "", name: "x", kind: "manual" }] });
+    expect(res.status).toBe(400);
+  });
+});
