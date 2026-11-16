@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { describe, it, expect, beforeAll } from "vitest";
-import { initDb } from "../models/db.js";
+import { getDb, initDb } from "../models/db.js";
 import { authRoutes } from "./auth.js";
 import { missionRoutes } from "./missions.js";
 
@@ -45,6 +45,84 @@ beforeAll(async () => {
     .post("/api/auth/register")
     .send({ email: "missions@test.dev", password: "secret123" });
   token = res.body.token;
+});
+
+describe("POST /api/missions/:id/duplicate", () => {
+  const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
+
+  const createMission = async (body: object = validBody, t = token) => {
+    const res = await request(app)
+      .post("/api/missions")
+      .set(auth(t))
+      .send(body);
+    return res.body.id as string;
+  };
+
+  it("copies every field into a new, unshared mission", async () => {
+    const id = await createMission({ ...validBody, name: "Original" });
+    // The copy is verbatim, so any JSON will do here; skip create validation
+    getDb()
+      .prepare(
+        "UPDATE missions SET pois = ?, obstacles = ?, site_features = ?, share_token = ? WHERE id = ?",
+      )
+      .run(
+        JSON.stringify([{ id: "p1", name: "Tower" }]),
+        JSON.stringify([{ id: "o1", name: "Shed" }]),
+        JSON.stringify([{ id: "s1", kind: "building" }]),
+        "tok-original",
+        id,
+      );
+
+    const res = await request(app)
+      .post(`/api/missions/${id}/duplicate`)
+      .set(auth(token));
+    expect(res.status).toBe(201);
+    expect(res.body.name).toBe("Original (copy)");
+    expect(res.body.id).not.toBe(id);
+
+    const [orig, copy] = await Promise.all(
+      [id, res.body.id].map((i) =>
+        request(app).get(`/api/missions/${i}`).set(auth(token)),
+      ),
+    );
+    for (const key of [
+      "config",
+      "waypoints",
+      "pois",
+      "obstacles",
+      "siteFeatures",
+    ]) {
+      expect(copy.body[key]).toEqual(orig.body[key]);
+    }
+    const row = getDb()
+      .prepare("SELECT share_token FROM missions WHERE id = ?")
+      .get(res.body.id) as { share_token: string | null };
+    expect(row.share_token).toBeNull();
+  });
+
+  it("refuses another user's mission with 403", async () => {
+    const other = await request(app)
+      .post("/api/auth/register")
+      .send({ email: "other-dup@test.dev", password: "secret123" });
+    const id = await createMission(validBody, other.body.token);
+    const res = await request(app)
+      .post(`/api/missions/${id}/duplicate`)
+      .set(auth(token));
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 404 for an unknown mission", async () => {
+    const res = await request(app)
+      .post("/api/missions/does-not-exist/duplicate")
+      .set(auth(token));
+    expect(res.status).toBe(404);
+  });
+
+  it("requires a session", async () => {
+    const id = await createMission();
+    const res = await request(app).post(`/api/missions/${id}/duplicate`);
+    expect(res.status).toBe(401);
+  });
 });
 
 describe("POST /api/missions — server-side validation", () => {

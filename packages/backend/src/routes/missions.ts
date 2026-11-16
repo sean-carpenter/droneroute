@@ -153,6 +153,45 @@ missionRoutes.put("/:id", authMiddleware, (req: AuthRequest, res) => {
   res.json({ id: req.params.id, name });
 });
 
+// Duplicate mission (owner only): a new, unshared copy named "<name> (copy)"
+missionRoutes.post(
+  "/:id/duplicate",
+  authMiddleware,
+  (req: AuthRequest, res) => {
+    const db = getDb();
+    const row = db
+      .prepare(
+        "SELECT user_id, name, config, waypoints, pois, obstacles, site_features FROM missions WHERE id = ?",
+      )
+      .get(req.params.id) as any;
+    if (!row) {
+      res.status(404).json({ error: "Mission not found" });
+      return;
+    }
+    if (row.user_id !== req.userId) {
+      res.status(403).json({ error: "Not authorized" });
+      return;
+    }
+
+    const id = uuidv4();
+    const name = `${row.name} (copy)`;
+    db.prepare(
+      "INSERT INTO missions (id, name, user_id, config, waypoints, pois, obstacles, site_features) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      id,
+      name,
+      req.userId!,
+      row.config,
+      row.waypoints,
+      row.pois || "[]",
+      row.obstacles || "[]",
+      row.site_features || "[]",
+    );
+
+    res.status(201).json({ id, name });
+  },
+);
+
 // Delete mission
 missionRoutes.delete("/:id", authMiddleware, (req: AuthRequest, res) => {
   const db = getDb();

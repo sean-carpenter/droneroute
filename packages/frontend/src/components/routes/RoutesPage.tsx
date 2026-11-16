@@ -17,6 +17,7 @@ import {
   Link,
   Link2Off,
   Check,
+  Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useMissionStore } from "@/store/missionStore";
@@ -208,6 +209,24 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
       if (id === openMissionId) useMissionStore.getState().clearMission();
     } catch (e: any) {
       toast.error("Failed to delete: " + (e.message || "Unknown error"));
+    }
+  };
+
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
+
+  const handleDuplicate = async (mission: SavedMission) => {
+    setDuplicatingId(mission.id);
+    try {
+      await api.post<{ id: string; name: string }>(
+        `/missions/${mission.id}/duplicate`,
+      );
+      // Refresh quietly (no spinner) so the copy shows up in its sorted place
+      setMissions(await api.get<SavedMission[]>("/missions"));
+      toast.success("Mission duplicated");
+    } catch (e: any) {
+      toast.error("Failed to duplicate: " + (e.message || "Unknown error"));
+    } finally {
+      setDuplicatingId(null);
     }
   };
 
@@ -505,6 +524,19 @@ export function RoutesPage({ onRequestAuth }: RoutesPageProps) {
                               }}
                             >
                               <Download className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                              disabled={duplicatingId === mission.id}
+                              title="Duplicate mission"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDuplicate(mission);
+                              }}
+                            >
+                              <Copy className="h-3.5 w-3.5" />
                             </Button>
                             <Button
                               variant="ghost"
