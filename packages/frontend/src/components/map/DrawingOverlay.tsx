@@ -67,13 +67,14 @@ export function DrawingOverlay({
   const shown = useMemo(() => ({ ...drawing, ...preview }), [drawing, preview]);
   const sourceId = `drawing-${drawing.id}`;
 
-  // The image source's corners only change on release (changing them through
-  // React reloads the image). While dragging, move them directly instead.
+  // Move the image's corners directly whenever the placement changes, while
+  // dragging and after typed or slider edits alike: react-map-gl does not
+  // pass coordinate changes on to an existing image source.
   useEffect(() => {
-    if (!map || !preview) return;
+    if (!map) return;
     const source = map.getSource(sourceId) as ImageSource | undefined;
     source?.setCoordinates(drawingImageCoordinates(shown));
-  }, [map, preview, shown, sourceId]);
+  }, [map, shown, sourceId]);
 
   // While the handles show, the drawing itself can be dragged to move it.
   // Only presses on the map canvas count, so the handles keep their own drags.
@@ -309,9 +310,13 @@ export function DrawingOverlay({
                     borderRadius: "50%",
                     cursor: "grab",
                   }}
-                  className="flex items-center justify-center text-sky-600"
+                  className="relative flex items-center justify-center text-sky-600"
                 >
                   <RotateCw className="h-3 w-3" strokeWidth={3} />
+                  {/* The angle, read live while spinning */}
+                  <span className="pointer-events-none absolute left-full ml-1.5 whitespace-nowrap rounded bg-black/75 px-1 text-[10px] font-medium text-white">
+                    {shown.rotationDeg.toFixed(1)}°
+                  </span>
                 </div>
               </Marker>
             );

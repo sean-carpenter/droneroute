@@ -22,6 +22,8 @@ Quick reference for all available keyboard shortcuts.
 | **Ctrl+Z** / **Cmd+Z**        | Undo the last change                             |
 | **Ctrl+Shift+Z** / **Ctrl+Y** | Redo                                             |
 | **Shift+drag** on the map     | Box-select the waypoints inside the rectangle    |
+| **[** / **]**                 | Turn the selected drawing 1° counter/clockwise   |
+| **Shift+[** / **Shift+]**     | Turn the selected drawing 10°                    |
 
 ## Good to know
 

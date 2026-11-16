@@ -21,7 +21,7 @@ Draw the buildings and areas of a site on the map — the existing building, a g
 Lay a drawing, such as the site plan from a permit set, over the map to line it up with the satellite view and trace buildings from it.
 
 - **Add** a drawing: drag a one-page PDF onto the editor, or press **Add drawing** in the **Site** section. It appears see-through in the middle of the map, with its handles showing.
-- **Line it up**: drag the drawing itself (or its middle handle) to move it, a corner to resize it (its proportions stay the same) and the round ⟳ handle above it to rotate it. The ⟲ and ⟳ buttons turn it 90° at a time, which helps with a sheet drawn sideways. For exact numbers, type the sheet's width on the ground in meters and its rotation in degrees.
+- **Line it up**: drag the drawing itself (or its middle handle) to move it, a corner to resize it (its proportions stay the same) and the round ⟳ handle above it to rotate it. To spin it precisely, use the rotation slider, the ⟲ and ⟳ buttons (1° a click, 10° with Shift) or the [ and ] keys while it is selected (1°, 10° with Shift). For exact numbers, type the sheet's width on the ground in meters and its rotation in degrees.
 - **See-through**: the slider sets how strongly the drawing shows. The white paper is always clear, so only the lines cover the map.
 - Press **Adjust** to show the handles again, and **Done** to hide them. The eye icon hides a drawing without removing it, and the X removes it.
 - Then draw the buildings over it as usual with **Draw**.

@@ -39,6 +39,7 @@ import { SiteFeatureList } from "@/components/mission/SiteFeatureList";
 import { DrawingList } from "@/components/mission/DrawingList";
 import { addDrawingWithFeedback } from "@/components/mission/addDrawingWithFeedback";
 import { isPdfFile } from "@/lib/drawingImport";
+import { normalizeDegrees } from "@/lib/drawings";
 import { RoutesPage } from "@/components/routes/RoutesPage";
 import { SharedMissionPage } from "@/components/routes/SharedMissionPage";
 import { AdminPage } from "@/pages/AdminPage";
@@ -524,6 +525,26 @@ export default function App() {
         selectedWaypointIndices,
         templateMode,
       } = useMissionStore.getState();
+
+      // [ and ] spin the selected drawing 1° (10° with Shift). Keys by
+      // position, since Shift turns them into { and }.
+      if (
+        (e.code === "BracketLeft" || e.code === "BracketRight") &&
+        !e.metaKey &&
+        !e.ctrlKey
+      ) {
+        const { selectedDrawingId, drawings, updateDrawing } =
+          useMissionStore.getState();
+        const d = drawings.find((x) => x.id === selectedDrawingId);
+        if (!d) return;
+        e.preventDefault();
+        const step =
+          (e.shiftKey ? 10 : 1) * (e.code === "BracketLeft" ? -1 : 1);
+        updateDrawing(d.id, {
+          rotationDeg: normalizeDegrees(d.rotationDeg + step),
+        });
+        return;
+      }
 
       switch (e.key.toLowerCase()) {
         case "w":

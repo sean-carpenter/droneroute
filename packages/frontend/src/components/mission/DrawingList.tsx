@@ -28,6 +28,9 @@ export function DrawingList() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
 
+  const spin = (id: string, from: number, by: number) =>
+    updateDrawing(id, { rotationDeg: normalizeDegrees(from + by) });
+
   const pick = async (file: File | undefined) => {
     if (!file) return;
     setBusy(true);
@@ -151,7 +154,7 @@ export function DrawingList() {
                     {Math.round(d.opacity * 100)}%
                   </span>
                 </label>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-2">
                   <label className="flex items-center gap-1">
                     Width
                     <input
@@ -174,48 +177,62 @@ export function DrawingList() {
                     />
                     m
                   </label>
-                  <label className="flex items-center gap-1">
-                    Rotation
-                    <input
-                      type="number"
-                      step={0.5}
-                      value={d.rotationDeg}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
-                        if (Number.isFinite(v)) {
-                          updateDrawing(d.id, {
-                            rotationDeg: normalizeDegrees(v),
-                          });
-                        }
-                      }}
-                      className="h-6 w-14 rounded border border-input bg-background px-1 text-[10px] text-foreground"
-                      title="Clockwise from north, in degrees"
-                    />
-                    °
-                  </label>
-                  {(
-                    [
-                      [-90, RotateCcw, "Turn 90° counterclockwise"],
-                      [90, RotateCw, "Turn 90° clockwise"],
-                    ] as const
-                  ).map(([step, Icon, label]) => (
-                    <button
-                      key={step}
-                      className="rounded border border-input p-1 text-foreground hover:bg-secondary"
-                      onClick={() =>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-14 shrink-0">Rotation</span>
+                  <button
+                    className="rounded border border-input p-1 text-foreground hover:bg-secondary"
+                    onClick={(e) =>
+                      spin(d.id, d.rotationDeg, e.shiftKey ? -10 : -1)
+                    }
+                    title="Turn 1° counterclockwise (Shift: 10°, or press [ )"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                  </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={359.9}
+                    step={0.1}
+                    value={d.rotationDeg}
+                    onChange={(e) =>
+                      updateDrawing(d.id, {
+                        rotationDeg: normalizeDegrees(Number(e.target.value)),
+                      })
+                    }
+                    className="min-w-0 flex-1 accent-sky-500"
+                    title="Spin the drawing; arrow keys move it 0.1° at a time"
+                  />
+                  <button
+                    className="rounded border border-input p-1 text-foreground hover:bg-secondary"
+                    onClick={(e) =>
+                      spin(d.id, d.rotationDeg, e.shiftKey ? 10 : 1)
+                    }
+                    title="Turn 1° clockwise (Shift: 10°, or press ] )"
+                  >
+                    <RotateCw className="h-3 w-3" />
+                  </button>
+                  <input
+                    type="number"
+                    step={1}
+                    value={d.rotationDeg}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (e.target.value !== "" && Number.isFinite(v)) {
                         updateDrawing(d.id, {
-                          rotationDeg: normalizeDegrees(d.rotationDeg + step),
-                        })
+                          rotationDeg: normalizeDegrees(v),
+                        });
                       }
-                      title={label}
-                    >
-                      <Icon className="h-3 w-3" />
-                    </button>
-                  ))}
+                    }}
+                    className="h-6 w-14 rounded border border-input bg-background px-1 text-[10px] text-foreground"
+                    title="Clockwise from north, in degrees"
+                  />
+                  °
                 </div>
                 <p>
                   On the map, drag the drawing to move it, a corner to resize it
-                  and the round ⟳ handle above it to rotate it.
+                  and the round ⟳ handle above it to spin it. With the drawing
+                  selected, [ and ] turn it 1° (10° with Shift).
                 </p>
               </div>
             )}
