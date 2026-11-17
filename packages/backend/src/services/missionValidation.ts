@@ -8,7 +8,12 @@
  * type-confusion). Each validator returns an error string, or `null` when valid.
  */
 
-import { ROUTE_GENERATORS, SITE_DRAWING_LIMITS } from "@droneroute/shared";
+import {
+  CAPTURE_ELEMENTS,
+  CAPTURE_OBJECTIVES,
+  ROUTE_GENERATORS,
+  SITE_DRAWING_LIMITS,
+} from "@droneroute/shared";
 
 const MAX_NAME_LEN = 200;
 const MAX_WAYPOINTS = 5000;
@@ -133,6 +138,56 @@ function validateRoutePlan(plan: unknown): string | null {
   }
   if (!isOptionalId(plan.targetFeatureId)) return "invalid route plan target";
   if (!isOptionalId(plan.poiId)) return "invalid route plan POI";
+  return validateRouteCapture(plan.capture);
+}
+
+const CAPTURE_SETTING_KEYS = [
+  "facadeStandoffM",
+  "roofClearanceM",
+  "obliqueOffsetM",
+  "siteAltitudeM",
+  "assumedHeightM",
+];
+const MAX_CAPTURE_SETTING_M = 1000;
+
+/** Checks which capture plan a route belongs to and what it covers. */
+function validateRouteCapture(capture: unknown): string | null {
+  if (capture === undefined) return null;
+  if (!isPlainObject(capture)) return "invalid route capture";
+  if (
+    typeof capture.planId !== "string" ||
+    capture.planId.length === 0 ||
+    !isOptionalId(capture.planId)
+  ) {
+    return "invalid capture plan id";
+  }
+  if (
+    typeof capture.objective !== "string" ||
+    !(CAPTURE_OBJECTIVES as readonly string[]).includes(capture.objective)
+  ) {
+    return "unknown capture objective";
+  }
+  if (
+    typeof capture.element !== "string" ||
+    !(CAPTURE_ELEMENTS as readonly string[]).includes(capture.element)
+  ) {
+    return "unknown capture element";
+  }
+  if (
+    typeof capture.featureId !== "string" ||
+    !isOptionalId(capture.featureId)
+  ) {
+    return "invalid capture building";
+  }
+  if (!isOptionalId(capture.lotId)) return "invalid capture lot";
+  if (!isPlainObject(capture.settings)) return "invalid capture settings";
+  const settings = capture.settings;
+  for (const key of CAPTURE_SETTING_KEYS) {
+    const v = settings[key];
+    if (!isFiniteNumber(v) || v < 0 || v > MAX_CAPTURE_SETTING_M) {
+      return "invalid capture settings";
+    }
+  }
   return null;
 }
 

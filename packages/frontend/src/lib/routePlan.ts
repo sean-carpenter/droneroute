@@ -13,6 +13,7 @@ import {
   generateOrbit,
   generatePencil,
   generateTower,
+  generateWalls,
   type BoundaryFacadeParams,
   type CorridorParams,
   type FacadeParams,
@@ -21,6 +22,7 @@ import {
   type PencilParams,
   type TemplateResult,
   type TowerParams,
+  type WallsParams,
 } from "@/lib/templates";
 
 /**
@@ -42,6 +44,7 @@ export type PlanInput =
   | { generator: "corridor"; params: CorridorParams }
   | { generator: "facade"; params: FacadeParams }
   | { generator: "boundaryFacade"; params: BoundaryFacadeParams }
+  | { generator: "walls"; params: WallsParams }
   | { generator: "pencil"; params: PencilParams };
 
 /** A plan input plus the site feature it was built around, if any. */
@@ -65,6 +68,8 @@ export function runPlan(
       return generateFacade(input.params, pois);
     case "boundaryFacade":
       return generateBoundaryFacade(input.params, pois);
+    case "walls":
+      return generateWalls(input.params, pois);
     case "pencil":
       return generatePencil(input.params, pois);
   }
@@ -184,6 +189,66 @@ export function routeEdited(
   if (!route.plan) return false;
   const members = waypoints.filter((wp) => wp.routeId === route.id);
   return waypointsFingerprint(members) !== route.plan.waypointsHash;
+}
+
+/**
+ * How close to a structure the route was planned to fly, for routes that
+ * fly beside one: the standoff warning then applies this distance instead of
+ * the general one. Undefined for routes with no planned standoff.
+ */
+export function routeStandoffM(
+  plan: RoutePlan | undefined,
+): number | undefined {
+  if (!plan) return undefined;
+  const params = plan.params as Record<string, unknown>;
+  if (plan.generator === "facade" && typeof params.distanceM === "number") {
+    return params.distanceM;
+  }
+  if (
+    plan.generator === "boundaryFacade" &&
+    typeof params.standoffM === "number"
+  ) {
+    return params.standoffM;
+  }
+  if (plan.generator === "walls" && Array.isArray(params.walls)) {
+    const distances = (params.walls as { distanceM?: unknown }[])
+      .map((w) => w.distanceM)
+      .filter((d): d is number => typeof d === "number");
+    return distances.length > 0 ? Math.min(...distances) : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Share of a route's planned standoff it may come within before the
+ * standoff warning fires: room for rounding, and for corners beveled by the
+ * outward path.
+ */
+export const STANDOFF_TOLERANCE = 0.9;
+
+/**
+ * Standoff to check each waypoint against, by waypoint index: the route's
+ * own planned standoff where it has one (never more than the general
+ * distance), otherwise the general distance.
+ */
+export function standoffByWaypoint(
+  waypoints: Pick<Waypoint, "index" | "routeId">[],
+  routes: MissionRoute[],
+  generalM: number,
+): (index: number) => number {
+  const byRoute = new Map<string, number>();
+  for (const route of routes) {
+    const planned = routeStandoffM(route.plan);
+    if (planned !== undefined) {
+      byRoute.set(route.id, Math.min(generalM, planned * STANDOFF_TOLERANCE));
+    }
+  }
+  const byIndex = new Map<number, number>();
+  for (const wp of waypoints) {
+    const own = wp.routeId ? byRoute.get(wp.routeId) : undefined;
+    if (own !== undefined) byIndex.set(wp.index, own);
+  }
+  return (index) => byIndex.get(index) ?? generalM;
 }
 
 /** True when the route was made by an earlier version of its generator. */

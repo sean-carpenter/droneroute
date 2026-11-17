@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Building2, Pencil, ScanLine, Settings, X } from "lucide-react";
+import {
+  Building2,
+  ClipboardList,
+  Pencil,
+  ScanLine,
+  Settings,
+  X,
+} from "lucide-react";
 import { SITE_FEATURE_KINDS, type SiteFeatureKind } from "@droneroute/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +35,8 @@ export function SiteFeatureList() {
     startDrawingSiteFeature,
     drawingSiteFeatureKind,
     templateMode,
+    routes,
+    openCapturePlan,
     startTemplateFromSeed,
   } = useMissionStore();
   const unitSystem = usePreferencesStore((s) => s.preferences.unitSystem);
@@ -242,6 +251,27 @@ export function SiteFeatureList() {
                   >
                     <ScanLine className="h-3 w-3" />
                     Plan facade inspection
+                  </Button>
+                )}
+                {feature.kind !== "lot" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 w-full gap-1.5 text-xs"
+                    disabled={templateMode !== null}
+                    title={
+                      templateMode !== null
+                        ? "Apply or cancel the open template first"
+                        : "Choose what the inspection is for and get the routes it needs: roof, facades and site, with time, photos and assumptions"
+                    }
+                    onClick={() => openCapturePlan(feature.id)}
+                  >
+                    <ClipboardList className="h-3 w-3" />
+                    {routes.some(
+                      (r) => r.plan?.capture?.featureId === feature.id,
+                    )
+                      ? "Update capture plan"
+                      : "Plan capture"}
                   </Button>
                 )}
                 <div className="text-[10px] text-muted-foreground">

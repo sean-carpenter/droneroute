@@ -424,6 +424,7 @@ export type RouteGenerator =
   | "corridor"
   | "facade"
   | "boundaryFacade"
+  | "walls"
   | "pencil";
 
 export const ROUTE_GENERATORS: readonly RouteGenerator[] = [
@@ -433,8 +434,73 @@ export const ROUTE_GENERATORS: readonly RouteGenerator[] = [
   "corridor",
   "facade",
   "boundaryFacade",
+  "walls",
   "pencil",
 ];
+
+// ── Capture plans ────────────────────────────────────────
+
+/** What an inspection of a building is for. */
+export type CaptureObjective =
+  | "exterior_baseline"
+  | "roof_inspection"
+  | "facade_inspection";
+
+export const CAPTURE_OBJECTIVES: readonly CaptureObjective[] = [
+  "exterior_baseline",
+  "roof_inspection",
+  "facade_inspection",
+];
+
+/** One part of a capture: an area seen one way. */
+export type CaptureElement =
+  | "site_context"
+  | "roof_nadir"
+  | "roof_oblique"
+  | "facade_north"
+  | "facade_east"
+  | "facade_south"
+  | "facade_west";
+
+export const CAPTURE_ELEMENTS: readonly CaptureElement[] = [
+  "site_context",
+  "roof_nadir",
+  "roof_oblique",
+  "facade_north",
+  "facade_east",
+  "facade_south",
+  "facade_west",
+];
+
+/** The numbers a capture plan is built with. Distances in meters. */
+export interface CaptureSettings {
+  /** Distance from each wall for the facade photos. */
+  facadeStandoffM: number;
+  /** Height above the roof for the straight-down roof photos. */
+  roofClearanceM: number;
+  /** Distance outside the outline, and height above the roof, for angled roof photos. */
+  obliqueOffsetM: number;
+  /** Height above take-off for the site photos. */
+  siteAltitudeM: number;
+  /** Height used when the building has none set. */
+  assumedHeightM: number;
+}
+
+/**
+ * Which capture plan a route belongs to and what it covers. Every route of
+ * one plan carries the same plan id, objective, target and settings, so the
+ * plan can be rebuilt from its routes.
+ */
+export interface RouteCapture {
+  planId: string;
+  objective: CaptureObjective;
+  element: CaptureElement;
+  /** The building the plan is for. */
+  featureId: string;
+  /** The lot outline used for site context, if any. */
+  lotId?: string;
+  settings: CaptureSettings;
+}
 
 /**
  * What a template route was made from, so it can be made again: the same
@@ -452,6 +518,8 @@ export interface RoutePlan {
   generatorVersion: number;
   /** Fingerprint of the waypoints as generated, to tell when they were edited by hand. */
   waypointsHash: string;
+  /** Set when the route is part of a capture plan. */
+  capture?: RouteCapture;
 }
 
 // ── Mission ──────────────────────────────────────────────

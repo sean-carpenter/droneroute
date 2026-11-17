@@ -459,3 +459,76 @@ describe("route plans", () => {
     ).toBe("route plan settings too large");
   });
 });
+
+describe("route capture", () => {
+  const capture = (overrides: Record<string, unknown> = {}) => ({
+    planId: "p1",
+    objective: "exterior_baseline",
+    element: "facade_north",
+    featureId: "house",
+    settings: {
+      facadeStandoffM: 6,
+      roofClearanceM: 20,
+      obliqueOffsetM: 10,
+      siteAltitudeM: 60,
+      assumedHeightM: 8,
+    },
+    ...overrides,
+  });
+  const withCapture = (c: unknown) => ({
+    ...validCreate,
+    routes: [
+      {
+        id: "r1",
+        name: "North facade (House)",
+        kind: "facade",
+        plan: {
+          generator: "walls",
+          params: { walls: [] },
+          generatorVersion: 1,
+          waypointsHash: "abc",
+          capture: c,
+        },
+      },
+    ],
+  });
+
+  it("accepts a well-formed capture", () => {
+    expect(validateMissionCreate(withCapture(capture()))).toBeNull();
+    expect(
+      validateMissionCreate(withCapture(capture({ lotId: "lot" }))),
+    ).toBeNull();
+  });
+
+  it("rejects a malformed capture", () => {
+    expect(validateMissionCreate(withCapture("x"))).toBe(
+      "invalid route capture",
+    );
+    expect(validateMissionCreate(withCapture(capture({ planId: "" })))).toBe(
+      "invalid capture plan id",
+    );
+    expect(
+      validateMissionCreate(withCapture(capture({ objective: "survey" }))),
+    ).toBe("unknown capture objective");
+    expect(
+      validateMissionCreate(withCapture(capture({ element: "chimney" }))),
+    ).toBe("unknown capture element");
+    expect(validateMissionCreate(withCapture(capture({ featureId: 3 })))).toBe(
+      "invalid capture building",
+    );
+    expect(
+      validateMissionCreate(
+        withCapture(capture({ settings: { facadeStandoffM: 6 } })),
+      ),
+    ).toBe("invalid capture settings");
+    expect(
+      validateMissionCreate(
+        withCapture(
+          capture({
+            settings: { ...capture().settings, siteAltitudeM: Infinity },
+          }),
+        ),
+      ),
+    ).toBe("invalid capture settings");
+  });
+});

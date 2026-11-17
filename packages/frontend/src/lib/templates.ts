@@ -210,6 +210,12 @@ export interface GridParams {
    * instead of filling the rectangle between the two corners.
    */
   boundary?: [number, number][];
+  /**
+   * Height above take-off of the surface being photographed, such as a
+   * roof. Overlap is worked out for the camera's distance to that surface
+   * rather than to the ground. Missing means the ground (0).
+   */
+  surfaceHeightM?: number;
 }
 
 export interface CorridorParams {
@@ -466,6 +472,17 @@ export interface PencilParams {
   reverse: boolean;
   /** `towardPOI` also turns the aircraft to face the POI during the flight. */
   aim: TemplateAim;
+}
+
+/** Several walls flown one after another as one route, e.g. one side of a building. */
+export interface WallsParams {
+  walls: FacadeParams[];
+  /**
+   * When set, each wall's photos start and end with a climb straight up to
+   * this height, so moving on to the next wall, round a corner, happens
+   * above the building rather than past its corner.
+   */
+  transitAltitude?: number;
 }
 
 export type TemplateParams =
@@ -882,11 +899,14 @@ export function gridSpacing(
     | "sideOverlap"
     | "forwardOverlap"
     | "camera"
+    | "surfaceHeightM"
   >,
 ): { lineSpacingM: number; photoIntervalM: number } {
   const camera = params.camera ?? MAVIC_3E_CAMERA;
   const fromOverlap = spacingFromOverlap(
-    params.altitude,
+    params.surfaceHeightM
+      ? Math.max(1, params.altitude - params.surfaceHeightM)
+      : params.altitude,
     params.sideOverlap,
     params.forwardOverlap,
     camera,
@@ -1446,6 +1466,34 @@ export function generateFacade(
 type XY = [number, number];
 
 /** Place `origin` at `distanceM` along the ray through `toward`. */
+/** Each wall's facade scan, in order, as one route. */
+export function generateWalls(
+  params: WallsParams,
+  availablePois: TemplatePoi[] = [],
+): TemplateResult {
+  const waypoints: TemplateResult["waypoints"] = [];
+  const transit = params.transitAltitude;
+  for (const wall of params.walls) {
+    if (waypoints.length >= MAX_SURVEY_WAYPOINTS) break;
+    const scan = generateFacade(wall, availablePois).waypoints;
+    if (scan.length === 0) continue;
+    if (transit === undefined) {
+      waypoints.push(...scan);
+      continue;
+    }
+    // Same spot, transit height, no photo: a vertical climb or descent
+    const above = (wp: (typeof scan)[number]) => ({
+      ...wp,
+      height: transit,
+      actions: [],
+      turnMode: "toPointAndStopWithContinuityCurvature" as const,
+      useGlobalTurnParam: false,
+    });
+    waypoints.push(above(scan[0]), ...scan, above(scan[scan.length - 1]));
+  }
+  return { waypoints: waypoints.slice(0, MAX_SURVEY_WAYPOINTS), pois: [] };
+}
+
 export function pointOnRay(
   origin: [number, number],
   toward: [number, number],

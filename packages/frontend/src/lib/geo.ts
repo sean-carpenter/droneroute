@@ -344,9 +344,20 @@ export function getObstacleWarnings(
     height?: number;
   }[],
   obstacles: Obstacle[],
-  options: { compareHeights?: boolean; standoffM?: number } = {},
+  options: {
+    compareHeights?: boolean;
+    standoffM?: number;
+    /**
+     * Standoff for one waypoint (and the leg leaving it), by its `index`.
+     * Undefined falls back to `standoffM`. Lets a route planned close to a
+     * wall be checked against its own distance rather than the general one.
+     */
+    standoffFor?: (index: number) => number | undefined;
+  } = {},
 ): ObstacleWarning[] {
   if (obstacles.length === 0 || waypoints.length === 0) return [];
+  const standoffAt = (index: number) =>
+    options.standoffFor?.(index) ?? options.standoffM;
 
   const compareHeights = options.compareHeights ?? true;
   const warnings: ObstacleWarning[] = [];
@@ -373,12 +384,12 @@ export function getObstacleWarnings(
           waypointIndex: wp.index,
           type: clears(wp.height) ? "passesOver" : "inside",
         });
-      } else if (options.standoffM && !clears(wp.height)) {
+      } else if (standoffAt(wp.index) && !clears(wp.height)) {
         const d = distanceToPolygonM(
           [wp.latitude, wp.longitude],
           obstacle.vertices,
         );
-        if (d < options.standoffM) {
+        if (d < standoffAt(wp.index)!) {
           warnings.push({
             obstacleId: obstacle.id,
             obstacleName: obstacle.name,
@@ -406,13 +417,13 @@ export function getObstacleWarnings(
           type: clears(wp1.height, wp2.height) ? "passesOver" : "crosses",
         });
       } else if (
-        options.standoffM &&
+        standoffAt(wp1.index) &&
         !clears(wp1.height, wp2.height) &&
         !pointInPolygon(p1, obstacle.vertices) &&
         !pointInPolygon(p2, obstacle.vertices)
       ) {
         const d = distanceToPolygonM(p1, obstacle.vertices, p2);
-        if (d < options.standoffM) {
+        if (d < standoffAt(wp1.index)!) {
           warnings.push({
             obstacleId: obstacle.id,
             obstacleName: obstacle.name,

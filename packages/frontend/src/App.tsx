@@ -65,6 +65,7 @@ import {
   OBSTACLE_CLEARANCE_M,
   DEFAULT_STANDOFF_M,
 } from "@/lib/geo";
+import { standoffByWaypoint } from "@/lib/routePlan";
 import { estimateMission, formatDuration } from "@/lib/missionStats";
 import { useWindStore } from "@/store/windStore";
 import { useSimulationStore } from "@/store/simulationStore";
@@ -198,8 +199,10 @@ export default function App() {
       getObstacleWarnings(waypoints, checkedObstacles, {
         compareHeights: config.heightMode !== "EGM96",
         standoffM: DEFAULT_STANDOFF_M,
+        // A facade planned at 2 m is checked against 2 m, not the general 10 m
+        standoffFor: standoffByWaypoint(waypoints, routes, DEFAULT_STANDOFF_M),
       }),
-    [waypoints, checkedObstacles, config.heightMode],
+    [waypoints, routes, checkedObstacles, config.heightMode],
   );
 
   // Airspace warnings
@@ -248,7 +251,7 @@ export default function App() {
       result.push({
         id: "obstacle-standoff",
         type: "obstacle",
-        message: `Route comes within ${DEFAULT_STANDOFF_M} m of ${tooCloseById.size} obstacle${tooCloseById.size > 1 ? "s" : ""}: ${names}`,
+        message: `Route comes closer than its standoff (${DEFAULT_STANDOFF_M} m unless the template set one) to ${tooCloseById.size} obstacle${tooCloseById.size > 1 ? "s" : ""}: ${names}`,
       });
     }
     const passedOver = new Set(

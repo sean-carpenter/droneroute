@@ -9,6 +9,8 @@ import type {
   SiteDrawing,
   SiteFeature,
   SiteFeatureKind,
+  CaptureObjective,
+  CaptureSettings,
 } from "@droneroute/shared";
 import {
   DEFAULT_MISSION_CONFIG,
@@ -18,6 +20,10 @@ import {
 import { usePreferencesStore } from "@/store/preferencesStore";
 import type { TemplateType } from "@/lib/templates";
 import type { TemplateSeed } from "@/lib/proposal";
+import {
+  DEFAULT_CAPTURE_SETTINGS,
+  type CompiledCapture,
+} from "@/lib/capturePlan";
 import { newId } from "@/lib/ids";
 import { newRoute, normalizeRoutes, routeIndices } from "@/lib/routes";
 import {
@@ -30,6 +36,15 @@ import {
 } from "@/lib/routePlan";
 
 export type SelectionMode = "replace" | "toggle" | "range";
+
+export interface CaptureDraft {
+  planId: string;
+  featureId: string;
+  objective: CaptureObjective;
+  settings: CaptureSettings;
+  /** True when the mission already has routes from this plan. */
+  existing: boolean;
+}
 
 /** The undoable part of the store: the mission document itself. */
 export interface MissionSnapshot {
@@ -170,6 +185,22 @@ interface MissionState {
     /** The template settings that made them, kept on the new route. */
     plan?: PlanRequest,
   ) => void;
+  /** The capture plan being set up for a building, before its routes are added. */
+  captureDraft: CaptureDraft | null;
+  /**
+   * Open the capture plan for a building: its existing plan when the mission
+   * has one, otherwise a new one.
+   */
+  openCapturePlan: (featureId: string) => void;
+  updateCaptureDraft: (
+    updates: Partial<Pick<CaptureDraft, "objective" | "settings">>,
+  ) => void;
+  closeCapturePlan: () => void;
+  /**
+   * Add a compiled capture plan's routes, replacing the routes an earlier
+   * version of the same plan made, in their place. One undo step.
+   */
+  applyCapturePlan: (compiled: CompiledCapture) => void;
   /**
    * Make a template route again from its plan, replacing its waypoints.
    * Returns false when the route has no plan or the plan makes no waypoints.
@@ -328,6 +359,123 @@ export const useMissionStore = create<MissionState>((set, get) => ({
   isAddingPoi: false,
   templateMode: null,
   templateSeed: null,
+  captureDraft: null,
+  openCapturePlan: (featureId) =>
+    set((state) => {
+      const existing = state.routes.find(
+        (r) => r.plan?.capture?.featureId === featureId,
+      )?.plan?.capture;
+      return {
+        captureDraft: existing
+          ? {
+              planId: existing.planId,
+              featureId,
+              objective: existing.objective,
+              settings: existing.settings,
+              existing: true,
+            }
+          : {
+              planId: newId(),
+              featureId,
+              objective: "exterior_baseline",
+              settings: { ...DEFAULT_CAPTURE_SETTINGS },
+              existing: false,
+            },
+      };
+    }),
+  updateCaptureDraft: (updates) =>
+    set((state) =>
+      state.captureDraft
+        ? { captureDraft: { ...state.captureDraft, ...updates } }
+        : {},
+    ),
+  closeCapturePlan: () => set({ captureDraft: null }),
+  applyCapturePlan: (compiled) =>
+    set((state) => {
+      const replaced = new Set(
+        state.routes
+          .filter((r) => r.plan?.capture?.planId === compiled.planId)
+          .map((r) => r.id),
+      );
+      const at = state.routes.findIndex((r) => replaced.has(r.id));
+      const kept = state.routes.filter((r) => !replaced.has(r.id));
+      const insertAt =
+        at < 0
+          ? kept.length
+          : state.routes.slice(0, at).filter((r) => !replaced.has(r.id)).length;
+
+      const added: MissionRoute[] = [];
+      const fresh: Waypoint[] = [];
+      for (const element of compiled.elements) {
+        const planned = element.route;
+        if (!planned) continue;
+        const id = newId();
+        const waypoints: Waypoint[] = planned.result.waypoints.map((wp, i) => ({
+          ...wp,
+          index: i,
+          name: `Waypoint ${i + 1}`,
+          routeId: id,
+        }));
+        added.push({
+          id,
+          name: planned.name,
+          kind: planned.kind,
+          plan: {
+            generator: planned.input.generator,
+            params: planned.input.params as unknown as Record<string, unknown>,
+            ...(planned.targetFeatureId
+              ? { targetFeatureId: planned.targetFeatureId }
+              : {}),
+            generatorVersion: GENERATOR_VERSION,
+            waypointsHash: waypointsFingerprint(waypoints),
+            capture: planned.capture,
+          },
+        });
+        fresh.push(...waypoints);
+      }
+      if (added.length === 0) return {};
+
+      const routes = [
+        ...kept.slice(0, insertAt),
+        ...added,
+        ...kept.slice(insertAt),
+      ];
+      const next = normalizeRoutes(
+        [
+          ...state.waypoints.filter(
+            (wp) => !wp.routeId || !replaced.has(wp.routeId),
+          ),
+          ...fresh,
+        ],
+        routes,
+      );
+      const addedIds = new Set(added.map((r) => r.id));
+      const members = next.waypoints
+        .filter((wp) => wp.routeId && addedIds.has(wp.routeId))
+        .map((wp) => wp.index);
+      // The plan assumed a height for a building without one: record it, so
+      // the obstacle checks see the building the routes were planned for
+      const siteFeatures = state.siteFeatures.some(
+        (f) => f.id === compiled.featureId && f.heightM == null,
+      )
+        ? state.siteFeatures.map((f) =>
+            f.id === compiled.featureId && f.heightM == null
+              ? { ...f, heightM: compiled.settings.assumedHeightM }
+              : f,
+          )
+        : state.siteFeatures;
+      return {
+        waypoints: next.waypoints,
+        routes: next.routes,
+        siteFeatures,
+        activeRouteId: added[added.length - 1].id,
+        selectedWaypointIndices: new Set(members),
+        lastSelectedWaypointIndex: members.at(-1) ?? null,
+        captureDraft: null,
+        templateMode: null,
+        dirty: true,
+      };
+    }),
   startTemplateFromSeed: (seed) =>
     set({
       templateMode: seed.type,
@@ -1188,6 +1336,7 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       obstacles: data.obstacles || [],
       siteFeatures: data.siteFeatures || [],
       drawings: data.drawings || [],
+      captureDraft: null,
       selectedDrawingId: null,
       selectedWaypointIndices: new Set<number>(),
       lastSelectedWaypointIndex: null,
@@ -1212,6 +1361,7 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       obstacles: [],
       siteFeatures: [],
       drawings: [],
+      captureDraft: null,
       selectedDrawingId: null,
       selectedWaypointIndices: new Set<number>(),
       lastSelectedWaypointIndex: null,

@@ -39,6 +39,8 @@ import { WindPanel } from "./WindPanel";
 import { SimulationLayer } from "./SimulationLayer";
 import { ProposalLayer } from "./ProposalLayer";
 import { ProposalPanel } from "@/components/mission/ProposalPanel";
+import { CapturePlanPanel } from "@/components/mission/CapturePlanPanel";
+import { CapturePlanPreview } from "./CapturePlanPreview";
 import { SimulationPlayer } from "@/components/mission/SimulationPlayer";
 import { useSimulationStore } from "@/store/simulationStore";
 import { Triangle, Building2 } from "lucide-react";
@@ -676,6 +678,7 @@ export function MapView() {
         <PoiPointingLines is3D={is3D} />
         <TemplateDrawHandler />
         <PencilDrawHandler />
+        <CapturePlanPreview />
         <ObstacleDrawHandler />
         <BoxSelectHandler />
         <WindPanel />
@@ -799,6 +802,7 @@ export function MapView() {
       <MapToolbar />
       <SimulationPlayer />
       <ProposalPanel />
+      <CapturePlanPanel />
     </div>
   );
 }

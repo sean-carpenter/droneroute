@@ -13,6 +13,7 @@ Draw the buildings and areas of a site on the map — the existing building, a g
   - change its name, kind and color in the list;
   - set a height, notes, and whether it counts as an obstacle (gear icon);
   - start a facade inspection around it (**Plan facade inspection** under the gear icon, for everything but a lot): the [facade template](templates.md) opens around the outline at a standoff distance, spanning the feature's height when one is set.
+  - plan its whole capture (**Plan capture** under the gear icon): see [capture plans](capture-plans.md).
 - **Remove** a feature with the X in the list.
 - Undo and redo cover every change.
 
