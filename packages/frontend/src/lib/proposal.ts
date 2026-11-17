@@ -126,7 +126,12 @@ export type TemplateSeed =
   | { type: "orbit"; params: OrbitParams }
   | { type: "tower"; params: TowerParams }
   /** A wall scan, or — with boundary params — a path around an outline. */
-  | { type: "facade"; params: FacadeParams | BoundaryFacadeParams };
+  | {
+      type: "facade";
+      params: FacadeParams | BoundaryFacadeParams;
+      /** Site feature the path goes around, kept on the route's plan. */
+      targetFeatureId?: string;
+    };
 
 const DEFAULT_STANDOFF_M = 1;
 const DEFAULT_FOOTPRINT_RADIUS_M = 10;

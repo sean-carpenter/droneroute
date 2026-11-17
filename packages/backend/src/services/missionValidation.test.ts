@@ -394,3 +394,68 @@ describe("drawings", () => {
     ).toBe("too many drawings");
   });
 });
+
+describe("route plans", () => {
+  const plan = (overrides: Record<string, unknown> = {}) => ({
+    generator: "boundaryFacade",
+    params: { boundary: "polygon", vertices: [[42.5, -71.0]], standoffM: 5 },
+    targetFeatureId: "f1",
+    generatorVersion: 1,
+    waypointsHash: "1a2b3c",
+    ...overrides,
+  });
+  const withPlan = (p: unknown) => ({
+    ...validCreate,
+    routes: [{ id: "r1", name: "Facade", kind: "facade", plan: p }],
+  });
+
+  it("accepts routes with or without a plan", () => {
+    expect(validateMissionCreate(withPlan(plan()))).toBeNull();
+    expect(validateMissionCreate(withPlan(undefined))).toBeNull();
+    expect(
+      validateMissionUpdate({
+        routes: [{ id: "r1", name: "Orbit", kind: "orbit" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a malformed plan", () => {
+    expect(validateMissionCreate(withPlan("grid"))).toBe("invalid route plan");
+    expect(validateMissionCreate(withPlan(plan({ generator: "laser" })))).toBe(
+      "unknown route plan generator",
+    );
+    expect(validateMissionCreate(withPlan(plan({ params: [1, 2] })))).toBe(
+      "invalid route plan settings",
+    );
+    expect(
+      validateMissionCreate(withPlan(plan({ generatorVersion: 1.5 }))),
+    ).toBe("invalid route plan version");
+    expect(validateMissionCreate(withPlan(plan({ generatorVersion: 0 })))).toBe(
+      "invalid route plan version",
+    );
+    expect(validateMissionCreate(withPlan(plan({ waypointsHash: "" })))).toBe(
+      "invalid route plan fingerprint",
+    );
+    expect(
+      validateMissionCreate(
+        withPlan(plan({ targetFeatureId: "x".repeat(65) })),
+      ),
+    ).toBe("invalid route plan target");
+    expect(
+      validateMissionUpdate({
+        routes: [
+          { id: "r1", name: "P", kind: "pencil", plan: plan({ poiId: 7 }) },
+        ],
+      }),
+    ).toBe("invalid route plan POI");
+  });
+
+  it("rejects oversized settings (DoS guard)", () => {
+    const path = Array.from({ length: 5000 }, (_, i) => [42 + i / 1e5, -71]);
+    expect(
+      validateMissionCreate(
+        withPlan(plan({ generator: "pencil", params: { path } })),
+      ),
+    ).toBe("route plan settings too large");
+  });
+});

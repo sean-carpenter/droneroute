@@ -236,6 +236,7 @@ export function SiteFeatureList() {
                           feature.vertices,
                           feature.heightM,
                         ),
+                        targetFeatureId: feature.id,
                       })
                     }
                   >

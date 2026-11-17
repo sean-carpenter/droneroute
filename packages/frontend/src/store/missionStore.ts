@@ -20,6 +20,14 @@ import type { TemplateType } from "@/lib/templates";
 import type { TemplateSeed } from "@/lib/proposal";
 import { newId } from "@/lib/ids";
 import { newRoute, normalizeRoutes, routeIndices } from "@/lib/routes";
+import {
+  GENERATOR_VERSION,
+  confirmedTarget,
+  planInputFor,
+  runPlan,
+  waypointsFingerprint,
+  type PlanRequest,
+} from "@/lib/routePlan";
 
 export type SelectionMode = "replace" | "toggle" | "range";
 
@@ -159,7 +167,14 @@ interface MissionState {
   appendWaypoints: (
     waypoints: Omit<Waypoint, "index" | "name">[],
     pois?: Omit<PointOfInterest, "id">[],
+    /** The template settings that made them, kept on the new route. */
+    plan?: PlanRequest,
   ) => void;
+  /**
+   * Make a template route again from its plan, replacing its waypoints.
+   * Returns false when the route has no plan or the plan makes no waypoints.
+   */
+  regenerateRoute: (routeId: string) => boolean;
 
   // Obstacle actions
   addObstacle: (vertices: [number, number][], height?: number | null) => void;
@@ -224,6 +239,16 @@ interface MissionState {
   }) => void;
   clearMission: () => void;
   setDirty: (dirty: boolean) => void;
+}
+
+/** Orbit and tower waypoints with a fixed heading turn to face the POI the template made. */
+function linkToTemplatePoi(waypoints: Waypoint[], poiId: string): void {
+  for (const wp of waypoints) {
+    if (wp.headingMode === "fixed") {
+      wp.headingMode = "towardPOI";
+      wp.poiId = poiId;
+    }
+  }
 }
 
 /** Routes that still have waypoints, plus the active one even if empty. */
@@ -986,7 +1011,7 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       selectedPoiId: null,
     }),
 
-  appendWaypoints: (newWps, newPois) =>
+  appendWaypoints: (newWps, newPois, plan) =>
     set((state) => {
       // Each template makes a route of its own, named after it
       const route = newRoute(state.templateMode ?? "manual", state.routes);
@@ -1004,15 +1029,24 @@ export const useMissionStore = create<MissionState>((set, get) => ({
       }));
 
       // If orbit template created a POI, link the waypoints to it
-      if (fullPois.length === 1) {
-        const poiId = fullPois[0].id;
-        for (const wp of fullWaypoints) {
-          if (wp.headingMode === "fixed") {
-            // Convert to towardPOI mode for orbit waypoints
-            wp.headingMode = "towardPOI";
-            wp.poiId = poiId;
-          }
-        }
+      const poiId = fullPois.length === 1 ? fullPois[0].id : undefined;
+      if (poiId) linkToTemplatePoi(fullWaypoints, poiId);
+
+      if (plan) {
+        const { targetFeatureId, ...input } = plan;
+        const target = confirmedTarget(
+          input,
+          targetFeatureId,
+          state.siteFeatures,
+        );
+        route.plan = {
+          generator: input.generator,
+          params: input.params as unknown as Record<string, unknown>,
+          ...(target ? { targetFeatureId: target } : {}),
+          ...(poiId ? { poiId } : {}),
+          generatorVersion: GENERATOR_VERSION,
+          waypointsHash: waypointsFingerprint(fullWaypoints),
+        };
       }
 
       const next = normalizeRoutes(
@@ -1033,6 +1067,80 @@ export const useMissionStore = create<MissionState>((set, get) => ({
         dirty: true,
       };
     }),
+
+  regenerateRoute: (routeId) => {
+    const state = get();
+    const route = state.routes.find((r) => r.id === routeId);
+    if (!route?.plan) return false;
+    const input = planInputFor(route.plan, state.siteFeatures);
+    const result = runPlan(input, state.pois);
+    if (result.waypoints.length === 0) return false;
+
+    // Reuse the POI the template made the first time rather than adding another
+    let pois = state.pois;
+    let poiId: string | undefined;
+    if (result.pois.length === 1) {
+      const made = result.pois[0];
+      const existing = state.pois.find((p) => p.id === route.plan!.poiId);
+      if (existing) {
+        poiId = existing.id;
+        pois = state.pois.map((p) =>
+          p.id === existing.id
+            ? {
+                ...p,
+                latitude: made.latitude,
+                longitude: made.longitude,
+                height: made.height,
+              }
+            : p,
+        );
+      } else {
+        poiId = newId();
+        pois = [...state.pois, { ...made, id: poiId }];
+      }
+    }
+
+    const fresh: Waypoint[] = result.waypoints.map((wp, i) => ({
+      ...wp,
+      index: i,
+      name: `Waypoint ${i + 1}`,
+      routeId,
+    }));
+    if (poiId) linkToTemplatePoi(fresh, poiId);
+
+    const { generator, targetFeatureId } = route.plan;
+    const routes = state.routes.map((r) =>
+      r.id === routeId
+        ? {
+            ...r,
+            plan: {
+              generator,
+              ...(targetFeatureId ? { targetFeatureId } : {}),
+              params: input.params as unknown as Record<string, unknown>,
+              ...(poiId ? { poiId } : {}),
+              generatorVersion: GENERATOR_VERSION,
+              waypointsHash: waypointsFingerprint(fresh),
+            },
+          }
+        : r,
+    );
+    const next = normalizeRoutes(
+      [...state.waypoints.filter((wp) => wp.routeId !== routeId), ...fresh],
+      routes,
+    );
+    const members = next.waypoints
+      .filter((wp) => wp.routeId === routeId)
+      .map((wp) => wp.index);
+    set({
+      waypoints: next.waypoints,
+      routes: next.routes,
+      pois,
+      selectedWaypointIndices: new Set(members),
+      lastSelectedWaypointIndex: members.at(-1) ?? null,
+      dirty: true,
+    });
+    return true;
+  },
 
   appendImported: (newWps, newPois = []) =>
     set((state) => {

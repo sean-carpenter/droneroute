@@ -17,6 +17,7 @@ import type {
   BoundaryFacadeResult,
   TemplateResult,
 } from "@/lib/templates";
+import { runPlan, type PlanInput } from "@/lib/routePlan";
 import {
   generateOrbit,
   generateGrid,
@@ -189,6 +190,8 @@ export function TemplateDrawHandler() {
   );
   const polygonVerticesRef = useRef<[number, number][]>([]);
   const [towerParams, setTowerParams] = useState<TowerParams | null>(null);
+  // Site feature a seeded facade goes around; the route's plan keeps it
+  const [seedTargetId, setSeedTargetId] = useState<string | null>(null);
 
   const resetState = useCallback(() => {
     setDragging(false);
@@ -201,6 +204,7 @@ export function TemplateDrawHandler() {
     polygonVerticesRef.current = [];
     setPolygonVertices([]);
     setTowerParams(null);
+    setSeedTargetId(null);
   }, []);
 
   const selectFacadeBoundary = useCallback((kind: FacadeBoundaryKind) => {
@@ -237,6 +241,7 @@ export function TemplateDrawHandler() {
       if ("boundary" in templateSeed.params) {
         setFacadeBoundary(templateSeed.params.boundary);
         setBoundaryParams(templateSeed.params);
+        setSeedTargetId(templateSeed.targetFeatureId ?? null);
       } else {
         setFacadeBoundary("wall");
         updateFacade(templateSeed.params);
@@ -413,14 +418,20 @@ export function TemplateDrawHandler() {
     };
   }, [map, templateMode, facadeBoundary, confirmed]);
 
-  const preview: TemplateResult | null = useMemo(() => {
-    if (orbitParams) return generateOrbit(orbitParams, pois);
-    if (gridParams) return generateGrid({ ...gridParams, camera });
-    if (boundaryParams) {
-      return generateBoundaryFacade({ ...boundaryParams, camera }, pois);
+  // The exact settings the preview runs with; kept on the route when applied
+  const planInput: PlanInput | null = useMemo(() => {
+    if (orbitParams) return { generator: "orbit", params: orbitParams };
+    if (gridParams) {
+      return { generator: "grid", params: { ...gridParams, camera } };
     }
-    if (facadeParams) return generateFacade(facadeParams, pois);
-    if (towerParams) return generateTower(towerParams, pois);
+    if (boundaryParams) {
+      return {
+        generator: "boundaryFacade",
+        params: { ...boundaryParams, camera },
+      };
+    }
+    if (facadeParams) return { generator: "facade", params: facadeParams };
+    if (towerParams) return { generator: "tower", params: towerParams };
     return null;
   }, [
     orbitParams,
@@ -429,8 +440,12 @@ export function TemplateDrawHandler() {
     boundaryParams,
     towerParams,
     camera,
-    pois,
   ]);
+
+  const preview: TemplateResult | null = useMemo(
+    () => (planInput ? runPlan(planInput, pois) : null),
+    [planInput, pois],
+  );
 
   const dragPreview = useMemo(() => {
     if (!dragging || !dragState || !templateMode) return null;
@@ -541,8 +556,11 @@ export function TemplateDrawHandler() {
   if (!templateMode || isPathTemplate(templateMode)) return null;
 
   const handleApply = () => {
-    if (preview) {
-      appendWaypoints(preview.waypoints, preview.pois);
+    if (preview && planInput) {
+      appendWaypoints(preview.waypoints, preview.pois, {
+        ...planInput,
+        targetFeatureId: seedTargetId ?? undefined,
+      });
     }
     resetState();
   };

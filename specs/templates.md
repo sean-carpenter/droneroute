@@ -44,14 +44,24 @@ Grid (photogrammetry mode) and corridor surveys offer three ways to take photos:
 3. Configure the template options in the panel that appears.
 4. Click or drag on the map to place the template. A polygon facade closes when you double-click or click the first corner.
    - A polygon facade can also start from an existing outline: open a [site feature](site-features.md)'s settings (gear icon) and press **Plan facade inspection**. The template opens around that footprint, 1 m outside it, from 1 m above the ground to just above the feature's height when one is set, looking straight at the wall.
-5. The generated waypoints appear in the sidebar and can be edited individually.
+5. The generated waypoints appear in the sidebar, as a route of their own, and can be edited individually.
+
+## Regenerating a route
+
+Each route a template makes remembers the settings it was made with: the template, every option, the camera, and, for **Plan facade inspection**, which site feature it goes around. They are saved with the mission and kept when it is duplicated, shared or cloned. They are never written to the KMZ.
+
+- Press the **regenerate** button (circular arrows) on a route in the waypoint list to make it again from those settings. With nothing changed you get exactly the same waypoints. A facade planned from a site feature follows the feature's **current** outline, so after reshaping a building, regenerate its facade instead of planning it again. If the feature has been deleted, the outline saved with the route is used.
+- When a route's waypoints have been changed by hand since the template made them, the route says **Edited since generated**. Regenerating it asks first, because it replaces those changes.
+- If a later version of DroneRoute changes how a template places waypoints, older routes say **Made by an earlier template version** until regenerated.
+- Regenerating is one step to undo. An orbit or tower keeps using the POI it made the first time.
+- Hand-placed and imported routes have nothing to regenerate from.
 
 ## Good to know
 
 - Survey math uses the Mavic 3E wide camera. With other payloads the same camera is used as a stand-in and the panel says so.
 - If the mission speed is too fast for the camera to keep up with the photo interval, the panel warns you and shows the highest usable speed.
 - Survey templates are capped at 2000 waypoints.
-- Templates are repeatable: the same settings always produce exactly the same waypoints and camera angles, so an inspection can be regenerated and flown again.
+- Templates are repeatable: the same settings always produce exactly the same waypoints and camera angles, and each route keeps its settings, so an inspection can be regenerated and flown again.
 - A new facade or tower inspection starts 1 m from the structure, with the lowest pass 1 m above the ground, and looks straight at the surface beside the drone. An orbit still aims at the ground under the center.
 - When an orbit or tower creates its center POI, the POI is placed at the height the camera aims for.
 

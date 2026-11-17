@@ -412,6 +412,46 @@ export interface MissionRoute {
   name: string;
   /** What made it: a template type, "manual" or "import". */
   kind: string;
+  /** How a template made it. Missing for hand-placed and imported routes. */
+  plan?: RoutePlan;
+}
+
+/** The generator a template route was made with. */
+export type RouteGenerator =
+  | "orbit"
+  | "tower"
+  | "grid"
+  | "corridor"
+  | "facade"
+  | "boundaryFacade"
+  | "pencil";
+
+export const ROUTE_GENERATORS: readonly RouteGenerator[] = [
+  "orbit",
+  "tower",
+  "grid",
+  "corridor",
+  "facade",
+  "boundaryFacade",
+  "pencil",
+];
+
+/**
+ * What a template route was made from, so it can be made again: the same
+ * settings give the same waypoints. Never written to the KMZ.
+ */
+export interface RoutePlan {
+  generator: RouteGenerator;
+  /** The exact settings the generator ran with, camera included. */
+  params: Record<string, unknown>;
+  /** Site feature whose outline the route goes around; regenerating uses its current outline. */
+  targetFeatureId?: string;
+  /** Point of interest the template created, reused when regenerating. */
+  poiId?: string;
+  /** Version of the generator code that made the waypoints. */
+  generatorVersion: number;
+  /** Fingerprint of the waypoints as generated, to tell when they were edited by hand. */
+  waypointsHash: string;
 }
 
 // ── Mission ──────────────────────────────────────────────

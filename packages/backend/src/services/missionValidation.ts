@@ -8,7 +8,7 @@
  * type-confusion). Each validator returns an error string, or `null` when valid.
  */
 
-import { SITE_DRAWING_LIMITS } from "@droneroute/shared";
+import { ROUTE_GENERATORS, SITE_DRAWING_LIMITS } from "@droneroute/shared";
 
 const MAX_NAME_LEN = 200;
 const MAX_WAYPOINTS = 5000;
@@ -19,6 +19,9 @@ const MAX_OBSTACLE_HEIGHT_M = 1000;
 const MAX_SITE_FEATURES = 200;
 const MAX_ROUTES = 500;
 const MAX_ID_LEN = 64;
+/** A route plan's settings, serialized. Pencil paths are the largest. */
+const MAX_PLAN_PARAMS_BYTES = 64 * 1024;
+const MAX_PLAN_HASH_LEN = 64;
 const MAX_VERTICES_PER_FEATURE = 500;
 const SITE_FEATURE_KINDS = ["existing", "garage", "addition", "lot", "other"];
 const COLOR = /^#[0-9a-fA-F]{6}$/;
@@ -88,7 +91,48 @@ function validateRoutes(value: unknown): string | null {
     if (typeof route.kind !== "string" || route.kind.length > 32) {
       return "invalid route kind";
     }
+    const planError = validateRoutePlan(route.plan);
+    if (planError) return planError;
   }
+  return null;
+}
+
+function isOptionalId(v: unknown): boolean {
+  return (
+    v === undefined ||
+    (typeof v === "string" && v.length > 0 && v.length <= MAX_ID_LEN)
+  );
+}
+
+/** Checks how a template route was made: kept so it can be made again. */
+function validateRoutePlan(plan: unknown): string | null {
+  if (plan === undefined) return null;
+  if (!isPlainObject(plan)) return "invalid route plan";
+  if (
+    typeof plan.generator !== "string" ||
+    !(ROUTE_GENERATORS as readonly string[]).includes(plan.generator)
+  ) {
+    return "unknown route plan generator";
+  }
+  if (!isPlainObject(plan.params)) return "invalid route plan settings";
+  if (JSON.stringify(plan.params).length > MAX_PLAN_PARAMS_BYTES) {
+    return "route plan settings too large";
+  }
+  if (
+    !Number.isInteger(plan.generatorVersion) ||
+    (plan.generatorVersion as number) < 1
+  ) {
+    return "invalid route plan version";
+  }
+  if (
+    typeof plan.waypointsHash !== "string" ||
+    plan.waypointsHash.length === 0 ||
+    plan.waypointsHash.length > MAX_PLAN_HASH_LEN
+  ) {
+    return "invalid route plan fingerprint";
+  }
+  if (!isOptionalId(plan.targetFeatureId)) return "invalid route plan target";
+  if (!isOptionalId(plan.poiId)) return "invalid route plan POI";
   return null;
 }
 

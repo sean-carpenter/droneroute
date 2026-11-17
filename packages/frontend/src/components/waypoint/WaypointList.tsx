@@ -10,6 +10,7 @@ import {
   ChevronRight,
   ChevronUp,
   Plus,
+  RefreshCw,
   Trash2,
 } from "lucide-react";
 import type { Waypoint } from "@droneroute/shared";
@@ -19,6 +20,7 @@ import { useMissionStore } from "@/store/missionStore";
 import type { SelectionMode } from "@/store/missionStore";
 import { usePreferencesStore } from "@/store/preferencesStore";
 import { formatHeight, formatSpeed } from "@/lib/units";
+import { planOutdated, routeEdited } from "@/lib/routePlan";
 import { WaypointEditorInline } from "./WaypointEditor";
 
 export function WaypointList() {
@@ -36,6 +38,7 @@ export function WaypointList() {
     removeRoute,
     moveRoute,
     selectRoute,
+    regenerateRoute,
   } = useMissionStore();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [renamingRoute, setRenamingRoute] = useState<string | null>(null);
@@ -257,6 +260,8 @@ export function WaypointList() {
         const members = waypoints.filter((wp) => wp.routeId === route.id);
         const isCollapsed = collapsed.has(route.id);
         const isActive = route.id === activeRouteId;
+        const edited = routeEdited(route, waypoints);
+        const outdated = !!route.plan && planOutdated(route.plan);
         return (
           <div
             key={route.id}
@@ -315,7 +320,43 @@ export function WaypointList() {
                     <span className="ml-1 text-blue-300">· adding here</span>
                   )}
                 </div>
+                {edited && (
+                  <div
+                    className="text-[10px] text-amber-400"
+                    title="Waypoints were changed by hand after the template made them. Regenerate replaces those changes."
+                  >
+                    Edited since generated
+                  </div>
+                )}
+                {!edited && outdated && (
+                  <div
+                    className="text-[10px] text-amber-400"
+                    title="An earlier version of this template made the route. Regenerate to use the current one."
+                  >
+                    Made by an earlier template version
+                  </div>
+                )}
               </div>
+              {route.plan && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 shrink-0 text-muted-foreground"
+                  onClick={() => {
+                    if (
+                      !edited ||
+                      confirm(
+                        `Regenerate "${route.name}" from its template settings? Changes made by hand to its waypoints will be lost.`,
+                      )
+                    ) {
+                      regenerateRoute(route.id);
+                    }
+                  }}
+                  title="Make the route again from the template settings it was made with"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"

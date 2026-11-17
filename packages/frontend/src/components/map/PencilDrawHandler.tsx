@@ -4,9 +4,8 @@ import { useMissionStore } from "@/store/missionStore";
 import { TemplateConfigPanel } from "./TemplateConfigPanel";
 import { TemplatePreview } from "./TemplatePreview";
 import type { CorridorParams, PencilParams } from "@/lib/templates";
+import { runPlan, type PlanInput } from "@/lib/routePlan";
 import {
-  generateCorridor,
-  generatePencil,
   pathLength,
   DEFAULT_CORRIDOR_PARAMS,
   DEFAULT_PENCIL_PARAMS,
@@ -126,13 +125,19 @@ export function PencilDrawHandler() {
     };
   }, [map, isPathMode, confirmed, resetState]);
 
-  const preview = useMemo(() => {
+  // The exact settings the preview runs with; kept on the route when applied
+  const planInput: PlanInput | null = useMemo(() => {
     if (corridorParams) {
-      return generateCorridor({ ...corridorParams, camera }, pois);
+      return { generator: "corridor", params: { ...corridorParams, camera } };
     }
-    if (!pencilParams) return null;
-    return generatePencil(pencilParams, pois);
-  }, [pencilParams, corridorParams, camera, pois]);
+    if (pencilParams) return { generator: "pencil", params: pencilParams };
+    return null;
+  }, [pencilParams, corridorParams, camera]);
+
+  const preview = useMemo(
+    () => (planInput ? runPlan(planInput, pois) : null),
+    [planInput, pois],
+  );
 
   // GeoJSON for the raw drawn path
   const rawPathGeojson = useMemo(() => {
@@ -150,8 +155,8 @@ export function PencilDrawHandler() {
   if (!isPathMode) return null;
 
   const handleApply = () => {
-    if (preview) {
-      appendWaypoints(preview.waypoints, preview.pois);
+    if (preview && planInput) {
+      appendWaypoints(preview.waypoints, preview.pois, planInput);
     }
     resetState();
   };
